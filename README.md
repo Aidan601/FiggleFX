@@ -48,15 +48,6 @@ the mod tools first**, or Radiant fails quietly: emitters draw nothing, a
 missing flare texture draws a white square. Rip that art separately (Greyhound
 or Saluki) and set it up in APE. `<name>_assets.txt` is the checklist.
 
-## Updates
-
-On startup FiggleFX asks GitHub for the latest release. If there is a newer one
-it offers to install it: the release zip is downloaded, the binaries are
-replaced and the app restarts. The old files are backed up first and put back if
-anything fails, and `hashes` is left alone, so a dictionary you have added to
-survives an update. Set `"AutoUpdates": "No"` in `Settings.json` to turn the
-check off.
-
 ## Known limitations
 
 - **Both**: emitter names aren't stored in compiled data, so emitters are
