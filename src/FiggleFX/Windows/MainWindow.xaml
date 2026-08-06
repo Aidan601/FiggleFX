@@ -1,0 +1,89 @@
+﻿<Window x:Class="HydraX.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="FiggleFX" 
+        Width="960" Height="540" 
+        MinWidth="640" MinHeight="360"
+        Background="#FF383838"
+        Style="{StaticResource WindowStyle}"
+        Closing="MainWindowClosing">
+    <Grid>
+        <!-- Search Box -->
+        <TextBox VerticalContentAlignment="Center"
+                 Text="{Binding Path=FilterString, UpdateSourceTrigger=PropertyChanged}"
+                 Height="30" Margin="42,0,260,0"
+                 TextWrapping="NoWrap"
+                 VerticalAlignment="Top" Background="#FF242424" BorderBrush="#FF242424"/>
+        <!-- Export Options (Tag = the Settings.json key each toggle writes) -->
+        <StackPanel Orientation="Horizontal"
+                    HorizontalAlignment="Right" VerticalAlignment="Top"
+                    Height="30" Width="260" Background="#FF242424">
+            <CheckBox x:Name="AssetListCheckBox"
+                      Content="Asset list" Tag="ExportAssetList" IsChecked="True"
+                      Checked="ExportOptionChanged" Unchecked="ExportOptionChanged"
+                      ToolTip="Write the &lt;name&gt;_assets.txt list of assets each effect references."
+                      Foreground="#FFB0B0B0" VerticalAlignment="Center" Margin="12,0,0,0"/>
+            <CheckBox x:Name="Bo4FxCheckBox"
+                      Content="BO4 .bo4fx" Tag="ExportBO4FX" IsChecked="False"
+                      Checked="ExportOptionChanged" Unchecked="ExportOptionChanged"
+                      ToolTip="Also write the BO4-native .bo4fx rip alongside the ported .efx (Black Ops 4 only)."
+                      Foreground="#FFB0B0B0" VerticalAlignment="Center" Margin="20,0,0,0"/>
+        </StackPanel>
+        <!-- Asset List -->
+        <ListView x:Name="AssetList"
+                  MouseDoubleClick="AssetListMouseDoubleClick"
+                  GridViewColumnHeader.Click="AssetListHeaderClick"
+                  VirtualizingStackPanel.IsVirtualizing="True"
+                  VirtualizingStackPanel.VirtualizationMode="Recycling"
+                  AllowDrop="True"
+                  Margin="42,30,0,0"
+                  Foreground="White"
+                  ItemsSource="{Binding Assets}">
+            <ListView.View>
+                <GridView>
+                    <!-- Name Column (Tag = the Asset property each header sorts on) -->
+                    <GridViewColumn Width="256" DisplayMemberBinding="{Binding DisplayName}">
+                        <GridViewColumn.Header>
+                            <GridViewColumnHeader Content="Name" Tag="DisplayName"/>
+                        </GridViewColumn.Header>
+                    </GridViewColumn>
+                    <!-- Zone Name Column -->
+                    <GridViewColumn Width="128" DisplayMemberBinding="{Binding Zone}">
+                        <GridViewColumn.Header>
+                            <GridViewColumnHeader Content="Zone" Tag="Zone"/>
+                        </GridViewColumn.Header>
+                    </GridViewColumn>
+                    <!-- Asset Type Column -->
+                    <GridViewColumn Width="128" DisplayMemberBinding="{Binding Type}">
+                        <GridViewColumn.Header>
+                            <GridViewColumnHeader Content="Type" Tag="Type"/>
+                        </GridViewColumn.Header>
+                    </GridViewColumn>
+                    <!-- Status Column -->
+                    <GridViewColumn Width="128">
+                        <GridViewColumn.Header>
+                            <GridViewColumnHeader Content="Status" Tag="Status"/>
+                        </GridViewColumn.Header>
+                        <GridViewColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding Path=Status}" Foreground="{Binding ForegroundColor}"/>
+                            </DataTemplate>
+                        </GridViewColumn.CellTemplate>
+                    </GridViewColumn>
+                    <!-- Info Column -->
+                    <GridViewColumn Width="224" DisplayMemberBinding="{Binding Information, FallbackValue=N/A}">
+                        <GridViewColumn.Header>
+                            <GridViewColumnHeader Content="Info" Tag="Information"/>
+                        </GridViewColumn.Header>
+                    </GridViewColumn>
+                </GridView>
+            </ListView.View>
+        </ListView>
+        <!-- Side Bar Buttons -->
+        <Button ContentTemplate="{StaticResource OpenMemoryIcon}"   ToolTip="Load assets from a supported game's memory."                   Style="{StaticResource IconButtonStyle}" Click="OpenGameClick"          HorizontalAlignment="Left"  Width="42" Height="42" VerticalAlignment="Top"                              IsEnabled="{Binding AssetButtonsEnabled, FallbackValue=True}"/>
+        <Button ContentTemplate="{StaticResource ExportAllIcon}"    ToolTip="Exports all listed assets in the asset list."                  Style="{StaticResource IconButtonStyle}" Click="ExportAllClick"         HorizontalAlignment="Left"  Width="42" Height="42" VerticalAlignment="Top"      Margin="0,42,0,0"       IsEnabled="{Binding AssetButtonsEnabled, FallbackValue=True}"/>
+        <Button ContentTemplate="{StaticResource ExportIcon}"       ToolTip="Exports selected assets in the asset list."                    Style="{StaticResource IconButtonStyle}" Click="ExportSelectedClick"    HorizontalAlignment="Left"  Width="42" Height="42" VerticalAlignment="Top"      Margin="0,84,0,0"       IsEnabled="{Binding AssetButtonsEnabled, FallbackValue=True}"/>
+        <!-- Dimmer -->
+        <Rectangle x:Name="Dimmer" Fill="#7F000000" Visibility="{Binding DimmerVisibility, FallbackValue=Hidden}"/>
+    </Grid>
+</Window>

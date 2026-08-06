@@ -1,0 +1,13 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+src/x64/
+src/Win32/
+*.user
+*.suo
+.vs/
+
+# Runtime output, written next to the exe
+exported_files/
+Log.txt
+Settings.json
