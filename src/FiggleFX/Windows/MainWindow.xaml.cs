@@ -2,6 +2,8 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Reflection;
+using System.Threading;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -58,6 +60,75 @@ namespace HydraX
             catch
             {
                 LogStream = null;
+            }
+
+            // Started on Loaded rather than here: the update prompt is owned by
+            // this window, which needs a handle before anything can be modal to it
+            Loaded += (sender, e) =>
+            {
+                if (Instance.Settings["AutoUpdates", "Yes"] == "Yes")
+                    new Thread(CheckForUpdate) { IsBackground = true }.Start();
+            };
+        }
+
+        /// <summary>
+        /// Offers the latest release, and installs it if the user says yes
+        /// </summary>
+        /// <remarks>
+        /// Runs on a background thread at startup: a slow or unreachable GitHub
+        /// must never hold up the window.
+        /// </remarks>
+        private void CheckForUpdate()
+        {
+            var release = FiggleUpdater.CheckForUpdate(Assembly.GetExecutingAssembly().GetName().Version);
+
+            if (release == null)
+                return;
+
+            Log(string.Format("Update available: {0}", release.Tag), "INFO");
+
+            var answer = Dispatcher.Invoke(() => MessageBox.Show(this,
+                string.Format("FiggleFX {0} is available. Update and restart now?", release.Tag),
+                "FiggleFX | Update Available",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Information));
+
+            if (answer != MessageBoxResult.Yes)
+                return;
+
+            // No zip attached to the release, so there is nothing to install
+            if (string.IsNullOrEmpty(release.ZipUrl))
+            {
+                System.Diagnostics.Process.Start(FiggleUpdater.ReleasesPage);
+                return;
+            }
+
+            var title = Title;
+
+            try
+            {
+                var payload = FiggleUpdater.Fetch(release, percent =>
+                    Dispatcher.Invoke(() => Title = string.Format("FiggleFX | Downloading update... {0}%", percent)));
+
+                Dispatcher.Invoke(() => Title = "FiggleFX | Installing update...");
+                FiggleUpdater.ApplyAndRestart(payload);
+                Log(string.Format("Installing {0}, restarting", release.Tag), "INFO");
+                Dispatcher.Invoke(() => Application.Current.Shutdown());
+            }
+            catch (Exception exception)
+            {
+                Log(string.Format("Update to {0} failed:\n\n{1}", release.Tag, exception), "ERROR");
+
+                Dispatcher.Invoke(() =>
+                {
+                    Title = title;
+                    MessageBox.Show(this,
+                        "The update could not be installed, so nothing was changed. Opening the download page instead.",
+                        "FiggleFX | Update Failed",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                    System.Diagnostics.Process.Start(FiggleUpdater.ReleasesPage);
+                });
             }
         }
 
