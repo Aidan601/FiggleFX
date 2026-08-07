@@ -56,7 +56,7 @@ namespace HydraX.Library
                 "billboardSprite", "orientedSprite", "rotatedSprite", "tail",
                 "line", "trail", "cloud", "model", "dynamicLight2", "type9",
                 "type10", "lensFlare", "type12", "decal", "runner",
-                "type15", "type16",
+                "beamSource", "beamTarget",
             };
 
             /// <summary>
@@ -67,7 +67,7 @@ namespace HydraX.Library
             {
                 "Sprite", "Oriented", "Rotated", "Tail", "Line", "Trail",
                 "Cloud", "Model", "Light", "Type9", "Type10", "Flare",
-                "Type12", "Decal", "Runner", "Type15", "Type16",
+                "Type12", "Decal", "Runner", "BeamSrc", "BeamTgt",
             };
 
             /// <summary>
@@ -316,7 +316,7 @@ namespace HydraX.Library
                 var assets = new SortedSet<string>(StringComparer.Ordinal);
                 var efx = DecompileEfx(header, elems, instance, assets);
 
-                var dir = Path.Combine("exported_files", instance.Game.Name);
+                var dir = Path.Combine("exported_files", instance.Game.Name, "fx");
 
                 Write(Path.Combine(dir, leaf + ".efx"), efx);
 
@@ -604,6 +604,12 @@ namespace HydraX.Library
                     Buffer.BlockCopy(c, 0x00, guid, 0, 16);
                     visuals.Add(new Guid(guid).ToString());
                 }
+                else if (elemType == 15 || elemType == 16)
+                {
+                    // beams: def name(s) at +0x00 (beamTarget usually empty —
+                    // shipping sources write an empty "beamTarget { };" block)
+                    visuals.AddRange(BeamNames(c, visualCount, instance));
+                }
                 else if (elemType != 8)
                 {
                     var raw = ReadVisuals(c, visualCount, elemType, instance);
@@ -627,11 +633,14 @@ namespace HydraX.Library
                         }
                     }
                 }
-                if (visuals.Count == 0)
+                // beam blocks are legitimately empty (beamTarget); every other
+                // type gets the "" placeholder Radiant expects
+                if (visuals.Count == 0 && elemType != 15 && elemType != 16)
                     visuals.Add("");
 
                 // ---- record what this emitter references ----
-                string visualKind = elemType == 7 ? "xmodel" : elemType == 14 ? "fx" : elemType == 11 ? "lensflare" : "material";
+                string visualKind = elemType == 7 ? "xmodel" : elemType == 14 ? "fx" : elemType == 11 ? "lensflare"
+                                  : (elemType == 15 || elemType == 16) ? "beam" : "material";
                 foreach (var v in visuals)
                     if (v != "")
                         assets.Add(visualKind + " " + v);
@@ -1033,17 +1042,31 @@ namespace HydraX.Library
                     Buffer.BlockCopy(c, 0x00, guid, 0, 16);
                     sb.Append("\t\t\"").Append(new Guid(guid).ToString()).Append("\"\n");
                 }
+                else if (elemType == 15 || elemType == 16)
+                {
+                    // beams: def name(s) at +0x00 (empty for most beamTargets)
+                    var beams = BeamNames(c, visualCount, instance);
+                    if (beams.Count == 0)
+                        beams.Add("");
+                    foreach (var b in beams)
+                        sb.Append("\t\t\"").Append(b).Append("\"\n");
+                }
                 else
                     foreach (var v in ReadVisuals(c, visualCount, elemType, instance))
                         sb.Append("\t\t\"").Append(v).Append("\"\n");
                 sb.Append("\t};\n");
-                var compute = ReadVisuals(c, visualCount, elemType, instance, 0x40);
-                if (compute.Count > 0 && compute[0] != "")
+                if (elemType != 11 && elemType != 15 && elemType != 16)
                 {
-                    sb.Append("\tcomputeVisuals\n\t{\n");
-                    foreach (var v in compute)
-                        sb.Append("\t\t\"").Append(v).Append("\"\n");
-                    sb.Append("\t};\n");
+                    // +0x40 holds the "|dup" twin material — meaningless for the
+                    // inline-data types (lensFlare GUID / beam name string)
+                    var compute = ReadVisuals(c, visualCount, elemType, instance, 0x40);
+                    if (compute.Count > 0 && compute[0] != "")
+                    {
+                        sb.Append("\tcomputeVisuals\n\t{\n");
+                        foreach (var v in compute)
+                            sb.Append("\t\t\"").Append(v).Append("\"\n");
+                        sb.Append("\t};\n");
+                    }
                 }
 
                 KV("counts", string.Format("visualCount {0} velN {1} velN2 {2} visN {3}", visualCount, velN, c[0x272], visN));
@@ -1053,8 +1076,12 @@ namespace HydraX.Library
                 WriteVisGraphs(sb, c, visN, elemType, instance);
 
                 // ---- unmapped nonzero ranges (nothing gets lost) ----
-                HexIfNonZero(sb, "\t", c, 0x08, 0x38, "unk008");
-                HexIfNonZero(sb, "\t", c, 0x48, 0x38, "unk048");
+                if (elemType != 15 && elemType != 16)
+                {
+                    // for beams +0x00..0x7F is the inline def name, already emitted
+                    HexIfNonZero(sb, "\t", c, 0x08, 0x38, "unk008");
+                    HexIfNonZero(sb, "\t", c, 0x48, 0x38, "unk048");
+                }
                 HexIfNonZero(sb, "\t", c, 0xC0, 0x08, "unk0C0");
                 HexIfNonZero(sb, "\t", c, 0x100, 0x08, "unk100");
                 HexIfNonZero(sb, "\t", c, 0x1C8, 0x4C, "unk1C8");
@@ -1156,6 +1183,40 @@ namespace HydraX.Library
                     Graph.Factor(times, Fl(0x28, 1), Fl(VisHalf + 0x28, 1, true)).Write(sb, "lightRadiusGraph");
                     Graph.Factor(times, Fl(0x30, 1), Fl(VisHalf + 0x30, 1, true)).Write(sb, "lightFovGraph");
                 }
+            }
+
+            /// <summary>
+            /// The beam def NAME(s) of a beamSource/beamTarget elem — same two
+            /// forms as T7: visualCount <= 1 ⇒ one char[0x40] name INLINE at
+            /// elem +0x00 (zeroed for beamTarget); visualCount >= 2 ⇒ +0x00
+            /// points at an array of visualCount inline char[0x40] names.
+            /// Verified corpus-wide: the inline names fnv1a60-hash to live
+            /// beam-pool assets.
+            /// </summary>
+            private List<string> BeamNames(byte[] c, int visualCount, HydraInstance instance)
+            {
+                var result = new List<string>();
+                long ptr = BitConverter.ToInt64(c, 0x00);
+                if (visualCount >= 2 && IsCanonicalPointer(ptr))
+                {
+                    for (int v = 0; v < visualCount; v++)
+                    {
+                        var name = instance.Reader.ReadNullTerminatedString(ptr + v * 0x40);
+                        if (!string.IsNullOrEmpty(name))
+                            result.Add(name);
+                    }
+                    return result;
+                }
+                int end = 0;
+                while (end < 0x40 && c[end] != 0)
+                {
+                    if (c[end] < 0x20 || c[end] > 0x7E)
+                        return result;   // not a printable name
+                    end++;
+                }
+                if (end > 0)
+                    result.Add(Encoding.ASCII.GetString(c, 0, end));
+                return result;
             }
 
             private List<string> ReadVisuals(byte[] c, int visualCount, int elemType, HydraInstance instance, int slot = 0x00)

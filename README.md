@@ -4,13 +4,13 @@ FiggleFX is a tool forked from [HydraX](https://github.com/Scobalula/HydraX) by
 [Scobalula](https://github.com/Scobalula) that decompiles and exports effects
 from Call of Duty: Black Ops 3 and 4.
 
-It rips **effects** and **lens flares** out of the running game and writes them
-back out as editable source files for the BO3 mod tools.
+It rips **effects**, **lens flares** and **beams** out of the running game and
+writes them back out as editable source files for the BO3 mod tools.
 
-| Game             | Pool        | Output                                                     |
-| ---------------- | ----------- | ---------------------------------------------------------- |
-| Black Ops 3 (T7) | `fx`, `klf` | `.efx` (`iwfx 3`), `.klf`                                  |
-| Black Ops 4 (T8) | `fx`, `klf` | `.efx` ported to BO3, optional BO4-native `.bo4fx`, `.klf` |
+| Game             | Pool                | Output                                                                                     |
+| ---------------- | ------------------- | ------------------------------------------------------------------------------------------ |
+| Black Ops 3 (T7) | `fx`, `klf`, `beam` | `.efx` (`iwfx 3`), `.klf`, beam defs as `beam.gdf` `.gdt`                                  |
+| Black Ops 4 (T8) | `fx`, `klf`, `beam` | `.efx` ported to BO3, optional BO4-native `.bo4fx`, `.klf`, beam defs as `beam.gdf` `.gdt` |
 
 Two export toggles,
 
@@ -31,13 +31,14 @@ Two export toggles,
 
 ## Installing what you rip
 
-Exports land flat in `exported_files\<game>\`, but have to go back in at the
-right path:
+Exports land in `exported_files\<game>\` (`fx\`, `lensflares\` and `beams\`
+subfolders), but have to go back in at the right path:
 
 | File   | Goes in                                          |
 | ------ | ------------------------------------------------ |
 | `.efx` | `%TA_TOOLS_PATH%share\raw\fx\<effect path>.efx`  |
 | `.klf` | `%TA_TOOLS_PATH%share\raw\lensflares\<name>.klf` |
+| `.gdt` | `%TA_TOOLS_PATH%source_data\<name>.gdt`          |
 
 An effect's asset name is its path while the export is named after the leaf, so
 `blood/fx_blood_decal_impact_ground` belongs at
@@ -56,12 +57,16 @@ or Saluki) and set it up in APE. `<name>_assets.txt` is the checklist.
 - **BO3**: `dynamicLight2` light graphs are exact, but the Radiant lightdef
   key/value block doesn't survive compilation, so a default OMNI block is
   written in its place. Trail meshes (`trailDef` verts/inds) are not emitted.
-  iwfx 2 beams (element types >= 15) are unhandled.
-- **BO4**: element types 15 and 16 are new in T8 and have no T7 counterpart, so
-  those emitters are skipped in the `.efx` (they are still in the `.bo4fx`).
-  Trail parameters and the inherit/attractor sample arrays aren't decoded, so
-  they port at their defaults. `computeVisuals`, a `|dup` twin of the primary
-  material, is dropped, which is lossless.
+- **BO4**: element types 9, 10 and 12 have no T7 counterpart, so those emitters
+  are skipped in the `.efx` (they are still in the `.bo4fx`). Trail parameters
+  and the inherit/attractor sample arrays aren't decoded, so they port at their
+  defaults. `computeVisuals`, a `|dup` twin of the primary material, is
+  dropped, which is lossless.
+- **Beams**: a beam def GDT carries the material, effects, size, color, timing
+  and waveform values. T8's width/colour curves have no BO3 equivalent and are
+  flattened to their base values, and the uvMode/curveType/beamShape/collision
+  settings aren't located in the compiled data yet, so they stay at GDF
+  defaults. Beam materials are often hash-named until the dictionaries grow.
 - **Lens flares**: positions/colour-depth fade distances, max angle and rotation
   seeds live in runtime buffer objects, not in the flare def, and are written at
   their defaults (~85% of keys are exact). The checksum is written as 0, which

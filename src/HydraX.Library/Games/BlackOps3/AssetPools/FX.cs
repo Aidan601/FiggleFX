@@ -64,6 +64,7 @@ namespace HydraX.Library
                 "billboardSprite", "orientedSprite", "rotatedSprite", "tail",
                 "line", "trail", "cloud", "model", "dynamicLight2", "light",
                 "dynamicLight", "dynamicSound", "lensFlare", "decal", "runner",
+                "beamSource", "beamTarget",
             };
 
             /// <summary>
@@ -74,13 +75,13 @@ namespace HydraX.Library
             {
                 "Sprite", "Oriented", "Rotated", "Tail", "Line", "Trail",
                 "Cloud", "Model", "DLight2", "Light", "DLight", "DSound",
-                "Flare", "Decal", "Runner",
+                "Flare", "Decal", "Runner", "BeamSrc", "BeamTgt",
             };
 
             /// <summary>
             /// Builds the Info string shown in the asset list: emitter counts
             /// per section plus which element types the effect is made of.
-            /// Types past the known enum (beams, iwfx 2 source/target) have no
+            /// Types past the known enum (17+, none ever observed) have no
             /// decompiler support and are counted separately.
             /// </summary>
             private static string Describe(int countL, int countO, int countE, byte[] elems)
@@ -328,7 +329,7 @@ namespace HydraX.Library
                 var text = Decompile(header, instance, assets);
 
                 var leaf = asset.Name.Substring(asset.Name.LastIndexOf('/') + 1);
-                var dir = Path.Combine("exported_files", instance.Game.Name);
+                var dir = Path.Combine("exported_files", instance.Game.Name, "fx");
                 Directory.CreateDirectory(dir);
 
                 // Radiant's parser requires CRLF line endings
@@ -608,6 +609,33 @@ namespace HydraX.Library
                     Buffer.BlockCopy(c, 0xF0, guid, 0, 16);
                     visuals.Add(new Guid(guid).ToString());
                 }
+                else if (elemType == 15 || elemType == 16)
+                {
+                    // Beams (VERIFIED live, Der Eisendrache 2026-08-07). The
+                    // visuals slot holds the beam def NAME(s), not asset ptrs:
+                    // visualCount <= 1 ⇒ one char[0x40] name INLINE at +0xF0
+                    // (zeroed for beamTarget — the block stays empty, matching
+                    // every shipping source); visualCount >= 2 ⇒ +0xF0 points
+                    // at an array of visualCount inline char[0x40] names.
+                    // T8 uses the same two forms at its +0x00 slot.
+                    if (visualCount >= 2 && visArray != 0)
+                    {
+                        for (int v = 0; v < visualCount; v++)
+                        {
+                            var name = instance.Reader.ReadNullTerminatedString(visArray + v * 0x40);
+                            if (!string.IsNullOrEmpty(name))
+                                visuals.Add(name);
+                        }
+                    }
+                    else
+                    {
+                        int end = 0xF0;
+                        while (end < 0x130 && c[end] != 0)
+                            end++;
+                        if (end > 0xF0)
+                            visuals.Add(Encoding.ASCII.GetString(c, 0xF0, end - 0xF0));
+                    }
+                }
                 else if (visArray != 0 && visualCount > 0 && elemType != 8)
                 {
                     for (int v = 0; v < visualCount; v++)
@@ -638,11 +666,14 @@ namespace HydraX.Library
                         visuals = cleaned;
                     }
                 }
-                if (visuals.Count == 0)
+                // beam blocks are legitimately empty (beamTarget); every other
+                // type gets the "" placeholder
+                if (visuals.Count == 0 && elemType != 15 && elemType != 16)
                     visuals.Add("");
 
                 // ---- record what this emitter references ----
-                string visualKind = elemType == 7 ? "xmodel" : elemType == 14 ? "fx" : elemType == 12 ? "lensflare" : "material";
+                string visualKind = elemType == 7 ? "xmodel" : elemType == 14 ? "fx" : elemType == 12 ? "lensflare"
+                                  : (elemType == 15 || elemType == 16) ? "beam" : "material";
                 foreach (var v in visuals)
                     if (v != "")
                         assets.Add(visualKind + " " + v);

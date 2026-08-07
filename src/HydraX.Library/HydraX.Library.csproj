@@ -69,9 +69,11 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Games\BlackOps3\BlackOps3.cs" />
+    <Compile Include="Games\BlackOps3\AssetPools\Beam.cs" />
     <Compile Include="Games\BlackOps3\AssetPools\FX.cs" />
     <Compile Include="Games\BlackOps3\AssetPools\KLF.cs" />
     <Compile Include="Games\BlackOps4\BlackOps4.cs" />
+    <Compile Include="Games\BlackOps4\AssetPools\Beam.cs" />
     <Compile Include="Games\BlackOps4\AssetPools\FX.cs" />
     <Compile Include="Games\BlackOps4\AssetPools\KLF.cs" />
     <Compile Include="HydraInstance.cs" />
