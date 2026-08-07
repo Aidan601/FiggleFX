@@ -103,7 +103,9 @@ namespace HydraX
                 return;
             }
 
-            var title = Title;
+            // Title is a dependency property: it must be read on the UI thread,
+            // and this method runs on a background one
+            var title = (string)Dispatcher.Invoke((Func<string>)(() => Title));
 
             try
             {
