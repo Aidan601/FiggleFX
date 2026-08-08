@@ -323,20 +323,35 @@ namespace HydraX.Library
                 if (asset.Name != instance.Reader.ReadNullTerminatedString(header.NamePointer))
                     throw new Exception("The asset at the expect memory address has changed. Press the Load Game button to refresh the asset list.");
 
-                // flat export: the source and its asset list land directly in
-                // the game folder (a ported effect only opens once those exist)
                 var assets = new SortedSet<string>(StringComparer.Ordinal);
                 var text = Decompile(header, instance, assets);
 
-                var leaf = asset.Name.Substring(asset.Name.LastIndexOf('/') + 1);
-                var dir = Path.Combine("exported_files", instance.Game.Name, "fx");
-                Directory.CreateDirectory(dir);
+                var path = OutputBase(instance, asset.Name);
 
                 // Radiant's parser requires CRLF line endings
-                File.WriteAllText(Path.Combine(dir, leaf + ".efx"), text.Replace("\n", "\r\n"));
+                File.WriteAllText(path + ".efx", text.Replace("\n", "\r\n"));
 
                 if (instance.Settings["ExportAssetList", "Yes"] == "Yes")
-                    File.WriteAllText(Path.Combine(dir, leaf + "_assets.txt"), AssetList(asset.Name, assets));
+                    File.WriteAllText(path + "_assets.txt", AssetList(asset.Name, assets));
+            }
+
+            /// <summary>
+            /// Builds the extension-less output path for an effect and creates
+            /// its folder. With ExportFxPaths on (the default) the asset name's
+            /// path under share/raw/fx is kept, which is where the effect has
+            /// to be installed anyway and is the only thing keeping effects
+            /// whose leaf names collide from overwriting each other; off, every
+            /// effect lands flat in the fx folder under its leaf name.
+            /// </summary>
+            private static string OutputBase(HydraInstance instance, string name)
+            {
+                var relative = instance.Settings["ExportFxPaths", "Yes"] == "Yes"
+                    ? name.Replace('/', Path.DirectorySeparatorChar)
+                    : name.Substring(name.LastIndexOf('/') + 1);
+
+                var path = Path.Combine("exported_files", instance.Game.Name, "fx", relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                return path;
             }
 
             /// <summary>

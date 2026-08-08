@@ -11,18 +11,23 @@
         <!-- Search Box -->
         <TextBox VerticalContentAlignment="Center"
                  Text="{Binding Path=FilterString, UpdateSourceTrigger=PropertyChanged}"
-                 Height="30" Margin="42,0,260,0"
+                 Height="30" Margin="42,0,370,0"
                  TextWrapping="NoWrap"
                  VerticalAlignment="Top" Background="#FF242424" BorderBrush="#FF242424"/>
         <!-- Export Options (Tag = the Settings.json key each toggle writes) -->
         <StackPanel Orientation="Horizontal"
                     HorizontalAlignment="Right" VerticalAlignment="Top"
-                    Height="30" Width="260" Background="#FF242424">
+                    Height="30" Width="370" Background="#FF242424">
+            <CheckBox x:Name="FxPathsCheckBox"
+                      Content="Keep paths" Tag="ExportFxPaths" IsChecked="True"
+                      Checked="ExportOptionChanged" Unchecked="ExportOptionChanged"
+                      ToolTip="Write each effect into its folder path under fx\ (the path it installs to), instead of flat under its leaf name."
+                      Foreground="#FFB0B0B0" VerticalAlignment="Center" Margin="12,0,0,0"/>
             <CheckBox x:Name="AssetListCheckBox"
                       Content="Asset list" Tag="ExportAssetList" IsChecked="True"
                       Checked="ExportOptionChanged" Unchecked="ExportOptionChanged"
                       ToolTip="Write the &lt;name&gt;_assets.txt list of assets each effect references."
-                      Foreground="#FFB0B0B0" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                      Foreground="#FFB0B0B0" VerticalAlignment="Center" Margin="20,0,0,0"/>
             <CheckBox x:Name="Bo4FxCheckBox"
                       Content="BO4 .bo4fx" Tag="ExportBO4FX" IsChecked="False"
                       Checked="ExportOptionChanged" Unchecked="ExportOptionChanged"

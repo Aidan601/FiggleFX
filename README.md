@@ -40,9 +40,11 @@ subfolders), but have to go back in at the right path:
 | `.klf` | `%TA_TOOLS_PATH%share\raw\lensflares\<name>.klf` |
 | `.gdt` | `%TA_TOOLS_PATH%source_data\<name>.gdt`          |
 
-An effect's asset name is its path while the export is named after the leaf, so
-`blood/fx_blood_decal_impact_ground` belongs at
-`share\raw\fx\blood\fx_blood_decal_impact_ground.efx`.
+An effect's asset name is its path, and exports keep it, so
+`blood/fx_blood_decal_impact_ground` is written to
+`fx\blood\fx_blood_decal_impact_ground.efx` and belongs at
+`share\raw\fx\blood\fx_blood_decal_impact_ground.efx`. Turning off **Keep
+paths** exports every effect flat under its leaf name instead.
 
 **Every material, image and model an effect or flare references must exist in
 the mod tools first**, or Radiant fails quietly: emitters draw nothing, a

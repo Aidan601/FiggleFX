@@ -309,25 +309,19 @@ namespace HydraX.Library
                     elems = ReadChunked(instance, elemsPtr, total * ElemSize);
 
                 var name = asset.Name.TrimStart('/');
-                var leaf = name.Substring(name.LastIndexOf('/') + 1);
 
-                // flat export: the BO3 source, the BO4-native rip and the
-                // asset list land directly in the game folder
                 var assets = new SortedSet<string>(StringComparer.Ordinal);
                 var efx = DecompileEfx(header, elems, instance, assets);
 
-                var dir = Path.Combine("exported_files", instance.Game.Name, "fx");
+                var path = OutputBase(instance, name);
 
-                Write(Path.Combine(dir, leaf + ".efx"), efx);
+                Write(path + ".efx", efx);
 
                 if (instance.Settings["ExportBO4FX", "No"] == "Yes")
-                    Write(Path.Combine(dir, leaf + ".bo4fx"), Decompile(asset.Name, header, elems, instance));
+                    Write(path + ".bo4fx", Decompile(asset.Name, header, elems, instance));
 
                 if (instance.Settings["ExportAssetList", "Yes"] == "Yes")
-                {
-                    Directory.CreateDirectory(dir);
-                    File.WriteAllText(Path.Combine(dir, leaf + "_assets.txt"), AssetList(name, assets));
-                }
+                    File.WriteAllText(path + "_assets.txt", AssetList(name, assets));
 
                 if (RawDumps)
                 {
@@ -346,6 +340,25 @@ namespace HydraX.Library
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
                 File.WriteAllText(path, text.Replace("\n", "\r\n"));   // Radiant needs CRLF
+            }
+
+            /// <summary>
+            /// Builds the extension-less output path for an effect and creates
+            /// its folder. With ExportFxPaths on (the default) the asset name's
+            /// path under share/raw/fx is kept, which is where the effect has
+            /// to be installed anyway and is the only thing keeping effects
+            /// whose leaf names collide from overwriting each other; off, every
+            /// effect lands flat in the fx folder under its leaf name.
+            /// </summary>
+            private static string OutputBase(HydraInstance instance, string name)
+            {
+                var relative = instance.Settings["ExportFxPaths", "Yes"] == "Yes"
+                    ? name.Replace('/', Path.DirectorySeparatorChar)
+                    : name.Substring(name.LastIndexOf('/') + 1);
+
+                var path = Path.Combine("exported_files", instance.Game.Name, "fx", relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                return path;
             }
 
             #region BO3 source writer (iwfx 3)

@@ -49,6 +49,7 @@ namespace HydraX
             DataContext = ViewModel;
             ViewModel.DimmerVisibility = Visibility.Hidden;
             Instance.Settings.Load("Settings.json");
+            FxPathsCheckBox.IsChecked = Instance.Settings["ExportFxPaths", "Yes"] == "Yes";
             AssetListCheckBox.IsChecked = Instance.Settings["ExportAssetList", "Yes"] == "Yes";
             Bo4FxCheckBox.IsChecked = Instance.Settings["ExportBO4FX", "No"] == "Yes";
             Log("FiggleFX - Log Session Begin", "BEGIN");
