@@ -11,13 +11,13 @@
         <!-- Search Box -->
         <TextBox VerticalContentAlignment="Center"
                  Text="{Binding Path=FilterString, UpdateSourceTrigger=PropertyChanged}"
-                 Height="30" Margin="42,0,370,0"
+                 Height="30" Margin="42,0,470,0"
                  TextWrapping="NoWrap"
                  VerticalAlignment="Top" Background="#FF242424" BorderBrush="#FF242424"/>
         <!-- Export Options (Tag = the Settings.json key each toggle writes) -->
         <StackPanel Orientation="Horizontal"
                     HorizontalAlignment="Right" VerticalAlignment="Top"
-                    Height="30" Width="370" Background="#FF242424">
+                    Height="30" Width="470" Background="#FF242424">
             <CheckBox x:Name="FxPathsCheckBox"
                       Content="Keep paths" Tag="ExportFxPaths" IsChecked="True"
                       Checked="ExportOptionChanged" Unchecked="ExportOptionChanged"
@@ -28,11 +28,22 @@
                       Checked="ExportOptionChanged" Unchecked="ExportOptionChanged"
                       ToolTip="Write the &lt;name&gt;_assets.txt list of assets each effect references."
                       Foreground="#FFB0B0B0" VerticalAlignment="Center" Margin="20,0,0,0"/>
-            <CheckBox x:Name="Bo4FxCheckBox"
-                      Content="BO4 .bo4fx" Tag="ExportBO4FX" IsChecked="False"
-                      Checked="ExportOptionChanged" Unchecked="ExportOptionChanged"
-                      ToolTip="Also write the BO4-native .bo4fx rip alongside the ported .efx (Black Ops 4 only)."
-                      Foreground="#FFB0B0B0" VerticalAlignment="Center" Margin="20,0,0,0"/>
+            <!-- How an unresolved BO4 name hash is spelled for the asset types
+                 Greyhound exports (materials, images, models, anims, sounds):
+                 match whichever tool you extract those with. Every other type
+                 (fx, klf, beam, …) is always spelled the Saluki way. -->
+            <TextBlock Text="Hashes:" Foreground="#FF808080"
+                       VerticalAlignment="Center" Margin="20,0,0,0"/>
+            <RadioButton x:Name="SalukiNamesRadio"
+                         Content="Saluki" GroupName="HashNameStyle" IsChecked="True"
+                         Checked="HashNameStyleChanged"
+                         ToolTip="material_4674c74919cd08f7 — the stored 63-bit hash, zero-padded to 16 digits, bare type prefix (Saluki / Cordycep naming)."
+                         Foreground="#FFB0B0B0" VerticalAlignment="Center" Margin="8,0,0,0"/>
+            <RadioButton x:Name="GreyhoundNamesRadio"
+                         Content="Greyhound" GroupName="HashNameStyle"
+                         Checked="HashNameStyleChanged"
+                         ToolTip="xmaterial_674c74919cd08f7 — the hash masked to 60 bits, unpadded, x-prefixed type (Greyhound naming; drops hash bits 60-62). Only affects materials, images, models, anims and sounds — the types Greyhound exports; everything else stays Saluki-named."
+                         Foreground="#FFB0B0B0" VerticalAlignment="Center" Margin="10,0,0,0"/>
         </StackPanel>
         <!-- Asset List -->
         <ListView x:Name="AssetList"

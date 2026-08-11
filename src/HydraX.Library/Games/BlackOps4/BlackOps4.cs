@@ -39,9 +39,112 @@ namespace HydraX.Library
         public const ulong FirstXModelHash = 0x04647533e968c910;
 
         /// <summary>
-        /// Hashes are 60-bit FNV1a — top nibble is always masked off
+        /// Dictionary key mask: the low 60 bits of an FNV1a name hash. Every
+        /// hash-name dictionary in the wild (.wni, ate47, our mined.csv) is
+        /// keyed on the 60-bit form, so all lookups mask to this.
         /// </summary>
         public const ulong HashMask = 0xFFFFFFFFFFFFFFF;
+
+        /// <summary>
+        /// The bits of a name field that are actually hash. The game stores the
+        /// full FNV1a-64 with bit 63 cleared (verified over 9,638 fx headers:
+        /// bit 63 is never set in memory, while bits 60-62 are uniformly
+        /// distributed real hash bits — for a name whose true FNV1a-64 has bit
+        /// 63 set, memory holds hash &amp; 0x7FFF…).
+        /// </summary>
+        public const ulong NameBits = 0x7FFFFFFFFFFFFFFF;
+
+        /// <summary>
+        /// How an unresolved name hash is spelled, so ripped effects reference
+        /// assets by the same name the tool that extracts them writes. Only
+        /// applies to the types Greyhound exports (materials, images, models,
+        /// anims, sounds) — see <see cref="StyleFor"/>.
+        /// </summary>
+        public enum HashNameStyle
+        {
+            /// <summary>
+            /// Saluki: "material_4674c74919cd08f7" — the stored 63-bit value,
+            /// zero-padded to 16 digits, bare type prefix.
+            /// </summary>
+            Saluki,
+
+            /// <summary>
+            /// Greyhound: "xmaterial_674c74919cd08f7" — the 60-bit masked value,
+            /// unpadded, x-prefixed type. Loses hash bits 60-62.
+            /// </summary>
+            Greyhound,
+        }
+
+        /// <summary>
+        /// Active hash-name style (Settings.json "HashNameStyle", applied on
+        /// attach and whenever the UI toggle changes)
+        /// </summary>
+        public static HashNameStyle NameStyle = HashNameStyle.Saluki;
+
+        /// <summary>
+        /// Parses the Settings.json value, defaulting to Saluki
+        /// </summary>
+        public static HashNameStyle ParseNameStyle(string value)
+        {
+            return string.Equals(value, "Greyhound", StringComparison.OrdinalIgnoreCase) ?
+                HashNameStyle.Greyhound :
+                HashNameStyle.Saluki;
+        }
+
+        /// <summary>
+        /// The asset types Greyhound exports, i.e. the only ones an unresolved
+        /// name has to agree with another tool on. Greyhound x-prefixes them
+        /// (xmaterial_/ximage_/xmodel_/xanim_/xsound_), Saluki does not
+        /// (material_/image_/model_/anim_/sound_); keyed on the Saluki
+        /// spelling. A prefix that isn't in here (fx, klf, beam, weapon, …) is
+        /// a type neither tool exports.
+        /// </summary>
+        private static readonly Dictionary<string, string> XPrefixes = new Dictionary<string, string>()
+        {
+            { "material", "xmaterial" },
+            { "image",    "ximage"    },
+            { "model",    "xmodel"    },
+            { "anim",     "xanim"     },
+            { "sound",    "xsound"    },
+        };
+
+        /// <summary>
+        /// The style a given asset type is actually spelled in. The setting
+        /// only reaches the types Greyhound exports — every other type is ours
+        /// alone, so it always takes the Saluki spelling, which keeps the whole
+        /// 63-bit name field instead of throwing bits 60-62 away.
+        /// </summary>
+        private static HashNameStyle StyleFor(string prefix)
+        {
+            return NameStyle == HashNameStyle.Greyhound && IsGreyhoundType(prefix) ?
+                HashNameStyle.Greyhound :
+                HashNameStyle.Saluki;
+        }
+
+        /// <summary>
+        /// Is this a type Greyhound exports? Accepts either spelling of the
+        /// prefix (our pool names are the x-prefixed ones).
+        /// </summary>
+        private static bool IsGreyhoundType(string prefix)
+        {
+            return XPrefixes.ContainsKey(prefix) || XPrefixes.ContainsValue(prefix);
+        }
+
+        /// <summary>
+        /// Spells a type prefix in the given style: our pool names are the
+        /// x-prefixed ones (PoolNames has "xmodel"/"xanim"), Greyhound's are
+        /// too, Saluki's are bare.
+        /// </summary>
+        private static string StylePrefix(string prefix, HashNameStyle style)
+        {
+            if (style == HashNameStyle.Greyhound)
+                return XPrefixes.TryGetValue(prefix, out var xprefix) ? xprefix : prefix;
+
+            if (prefix.Length > 1 && prefix[0] == 'x' && XPrefixes.ContainsValue(prefix))
+                return prefix.Substring(1);
+
+            return prefix;
+        }
 
         /// <summary>
         /// Hash -> asset name dictionary (loaded from optional files, see LoadHashIndex)
@@ -119,6 +222,8 @@ namespace HydraX.Library
 
         public bool Initialize(HydraInstance instance)
         {
+            NameStyle = ParseNameStyle(instance.Settings["HashNameStyle", "Saluki"]);
+
             var module = instance.Reader.Modules[0];
             var moduleBase = module.BaseAddress.ToInt64();
 
@@ -319,15 +424,30 @@ namespace HydraX.Library
         /// Loads hash->name dictionaries from optional plain-text files next to the
         /// executable: hashes/*.txt and hashes/*.csv, lines "hash,name" or
         /// "hash name" (hash hex with or without 0x). Hashes are masked to 60 bits.
+        /// A release's own dictionaries are read straight out of
+        /// <see cref="FiggleUpdater.HashPayloadFolder"/> too, for the case where
+        /// they could not be moved into hashes\ (a read-only install).
         /// </summary>
         public static void LoadHashIndex()
         {
             if (HashIndex.Count > 0)
                 return;
 
+            var root = AppDomain.CurrentDomain.BaseDirectory;
+
+            // Shipped last: it is the newer copy of any file it shares a name with
+            foreach (var dir in new[] { Path.Combine(root, "hashes"),
+                                        Path.Combine(root, FiggleUpdater.HashPayloadFolder) })
+                LoadHashDirectory(dir);
+        }
+
+        /// <summary>
+        /// Adds every dictionary file in one folder to <see cref="HashIndex"/>
+        /// </summary>
+        private static void LoadHashDirectory(string dir)
+        {
             try
             {
-                var dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "hashes");
                 if (!Directory.Exists(dir))
                     return;
 
@@ -356,12 +476,25 @@ namespace HydraX.Library
         }
 
         /// <summary>
-        /// Resolves a 60-bit name hash to a name, else "&lt;prefix&gt;_&lt;hash hex&gt;"
+        /// Resolves a name hash to a name, else spells the hash in the style
+        /// that applies to this asset type (see <see cref="StyleFor"/>). Pass
+        /// the field as stored (masked with <see cref="NameBits"/>, not
+        /// <see cref="HashMask"/>) — the Saluki spelling needs bits 60-62,
+        /// which the 60-bit mask throws away.
         /// </summary>
         public static string GetHashName(ulong hash, string prefix)
         {
-            hash &= HashMask;
-            return HashIndex.TryGetValue(hash, out var name) ? name : string.Format("{0}_{1:x}", prefix, hash);
+            hash &= NameBits;
+
+            if (HashIndex.TryGetValue(hash & HashMask, out var name))
+                return name;
+
+            var style = StyleFor(prefix);
+
+            if (style == HashNameStyle.Greyhound)
+                return string.Format("{0}_{1:x}", StylePrefix(prefix, style), hash & HashMask);
+
+            return string.Format("{0}_{1:x16}", StylePrefix(prefix, style), hash);
         }
 
         /// <summary>

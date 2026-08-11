@@ -10,14 +10,20 @@ writes them back out as editable source files for the BO3 mod tools.
 | Game             | Pool                | Output                                                                                     |
 | ---------------- | ------------------- | ------------------------------------------------------------------------------------------ |
 | Black Ops 3 (T7) | `fx`, `klf`, `beam` | `.efx` (`iwfx 3`), `.klf`, beam defs as `beam.gdf` `.gdt`                                  |
-| Black Ops 4 (T8) | `fx`, `klf`, `beam` | `.efx` ported to BO3, optional BO4-native `.bo4fx`, `.klf`, beam defs as `beam.gdf` `.gdt` |
+| Black Ops 4 (T8) | `fx`, `klf`, `beam` | `.efx` ported to BO3, `.klf`, beam defs as `beam.gdf` `.gdt` |
 
-Two export toggles,
+Export options,
 
-| Toggle         | Effect                                                                              |
+| Option         | Effect                                                                              |
 | -------------- | ----------------------------------------------------------------------------------- |
+| **Keep paths** | write each effect into its folder path under `fx\`, the path it installs to         |
 | **Asset list** | also write `<name>_assets.txt`, the materials/models/effects each effect references |
-| **BO4 .bo4fx** | also write the BO4-native rip alongside the ported `.efx`                           |
+| **Hashes**     | how a BO4 name that isn't in the dictionaries is spelled, Saluki or Greyhound       |
+
+Black Ops 4 names assets by hash, so anything the shipped dictionaries don't
+cover is written as a placeholder like `material_4674c74919cd08f7`. Set
+**Hashes** to whichever tool you rip the referenced materials, images and
+models with, and the names line up on both sides.
 
 ## Requirements
 
@@ -60,9 +66,8 @@ or Saluki) and set it up in APE. `<name>_assets.txt` is the checklist.
   key/value block doesn't survive compilation, so a default OMNI block is
   written in its place. Trail meshes (`trailDef` verts/inds) are not emitted.
 - **BO4**: element types 9, 10 and 12 have no T7 counterpart, so those emitters
-  are skipped in the `.efx` (they are still in the `.bo4fx`). Trail parameters
-  and the inherit/attractor sample arrays aren't decoded, so they port at their
-  defaults. `computeVisuals`, a `|dup` twin of the primary material, is
+  are skipped in the `.efx`. Trail parameters and the inherit/attractor sample
+  arrays aren't decoded, so they port at their defaults. `computeVisuals`, a `|dup` twin of the primary material, is
   dropped, which is lossless.
 - **Beams**: a beam def GDT carries the material, effects, size, color, timing
   and waveform values. T8's width/colour curves have no BO3 equivalent and are

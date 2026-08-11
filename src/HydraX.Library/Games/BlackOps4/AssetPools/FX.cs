@@ -9,15 +9,13 @@ namespace HydraX.Library
     public partial class BlackOps4
     {
         /// <summary>
-        /// Black Ops 4 FX pool (index 33) — rips compiled T8 FxEffectDefs to a
-        /// faithful BO4-native text format ("bo4fx 2"), plus optional raw
-        /// research dumps (RawDumps=true) used while reversing the layout.
+        /// Black Ops 4 FX pool (index 33) — rips compiled T8 FxEffectDefs and
+        /// ports them to BO3 iwfx 3 source (.efx), plus optional raw research
+        /// dumps (RawDumps=true) used while reversing the layout.
         ///
         /// T8 FxElemDef layout (0x280) established 2026-08-04 by value voting
         /// against the 322 BO3-named anchor effects — see repo CLAUDE.md
-        /// "T8 FxElemDef (0x280) map". Graphs are emitted in iwfx-style
-        /// two-curve syntax so the future T8-&gt;T7 porter is mostly a key-mapper.
-        /// Unmapped nonzero byte ranges are emitted as hex so nothing is lost.
+        /// "T8 FxElemDef (0x280) map".
         /// </summary>
         private class FXEffect : IAssetPool
         {
@@ -261,7 +259,7 @@ namespace HydraX.Library
                     if (IsNullAsset(first))
                         continue;
 
-                    var hash = (ulong)first & HashMask;
+                    var hash = (ulong)first & NameBits;
 
                     var hdr = ReadChunked(instance, address, AssetSize);
                     int countL = BitConverter.ToUInt16(hdr, ElemCountsOffset);
@@ -316,9 +314,6 @@ namespace HydraX.Library
                 var path = OutputBase(instance, name);
 
                 Write(path + ".efx", efx);
-
-                if (instance.Settings["ExportBO4FX", "No"] == "Yes")
-                    Write(path + ".bo4fx", Decompile(asset.Name, header, elems, instance));
 
                 if (instance.Settings["ExportAssetList", "Yes"] == "Yes")
                     File.WriteAllText(path + "_assets.txt", AssetList(name, assets));
@@ -587,12 +582,12 @@ namespace HydraX.Library
                 string RefName(int off)
                 {
                     long ptr = BitConverter.ToInt64(c, off);
-                    return IsCanonicalPointer(ptr) ? ResolveAsset(ptr, instance) : "";
+                    return IsCanonicalPointer(ptr) ? ResolveAsset(ptr, instance, "fx") : "";
                 }
                 string SoundName(int off)
                 {
                     ulong raw = BitConverter.ToUInt64(c, off);
-                    return raw == 0 ? "" : GetHashName(raw & HashMask, "sound");
+                    return raw == 0 ? "" : GetHashName(raw, "sound");
                 }
                 string fxOnImpact = RefName(0xC8);
                 string fxOnDeath = RefName(0xD8);
@@ -905,299 +900,7 @@ namespace HydraX.Library
             }
             #endregion
 
-            #region Decompiler
-            private string Decompile(string name, byte[] hdr, byte[] elems, HydraInstance instance)
-            {
-                var sb = new StringBuilder();
-                ulong hash = BitConverter.ToUInt64(hdr, 0) & HashMask;
-                int countL = BitConverter.ToUInt16(hdr, 0x24);
-                int countO = BitConverter.ToUInt16(hdr, 0x26);
-                int countE = BitConverter.ToUInt16(hdr, 0x28);
-
-                sb.Append("bo4fx 2\n");
-                sb.Append("name \"").Append(name).Append("\";\n");
-                sb.AppendFormat("nameHash 0x{0:X15};\n", hash);
-                sb.AppendFormat("flags 0x{0:X8};\n", BitConverter.ToUInt32(hdr, 0x10));
-                sb.Append("msecLoopingLife ").Append(BitConverter.ToInt32(hdr, 0x14)).Append(";\n");
-                sb.Append("msecNonLoopingLife ").Append(BitConverter.ToInt32(hdr, 0x18)).Append(";\n");
-                sb.Append("gpuMsecLife ").Append(BitConverter.ToInt32(hdr, 0x1C)).Append(";\n");
-                sb.Append("unknown20 ").Append(BitConverter.ToInt32(hdr, 0x20)).Append(";\n");
-                sb.AppendFormat("elemDefCounts {0} {1} {2};\n", countL, countO, countE);
-                sb.AppendFormat("boundingBoxDim {0} {1} {2};\n",
-                    N(F(hdr, 0x38)), N(F(hdr, 0x3C)), N(F(hdr, 0x40)));
-                sb.AppendFormat("boundingBoxCentre {0} {1} {2};\n",
-                    N(F(hdr, 0x44)), N(F(hdr, 0x48)), N(F(hdr, 0x4C)));
-                HexIfNonZero(sb, "", hdr, 0x50, AssetSize - 0x50, "hdrUnk");
-
-                int total = countL + countO + countE;
-                if (elems == null)
-                    total = 0;
-
-                for (int i = 0; i < total; i++)
-                {
-                    var c = new byte[ElemSize];
-                    if ((i + 1) * ElemSize > elems.Length)
-                        break;
-                    Buffer.BlockCopy(elems, i * ElemSize, c, 0, ElemSize);
-                    string section = i < countL ? "looping" : (i < countL + countO ? "oneshot" : "emission");
-                    WriteElement(sb, i, section, c, instance);
-                }
-
-                return sb.ToString();
-            }
-
-            private void WriteElement(StringBuilder sb, int index, string section, byte[] c, HydraInstance instance)
-            {
-                double F0(int off) => F(c, off);
-                int I(int off) => BitConverter.ToInt32(c, off);
-                string FPair(int off) => Pair(F(c, off), F(c, off + 4));
-                string IPair(int off) => I(off) + " " + I(off + 4);
-                string DegPair(int off) => Pair(F(c, off) * Rad2Deg, F(c, off + 4) * Rad2Deg);
-                string DegMsPair(int off) => Pair(F(c, off) * Rad2Deg * 1000, F(c, off + 4) * Rad2Deg * 1000);
-
-                int elemType = c[0x264];
-                string typeName = elemType < ElemTypeNames.Length ? ElemTypeNames[elemType] : "type" + elemType;
-                bool looping = (c[0x260] & 1) != 0;
-                int visualCount = c[0x26E];
-                int velN = c[0x26F];
-                int visN = c[0x273];
-
-                sb.Append("\nelement ").Append(index).Append(" {\n");
-                void KV(string k, string v) => sb.Append('\t').Append(k).Append(' ').Append(v).Append(";\n");
-
-                KV("section", section);
-                KV("type", typeName);
-                KV("looping", looping ? "1" : "0");
-
-                // ---- flags (decoded + raw) ----
-                uint flags = BitConverter.ToUInt32(c, 0x118);
-                uint extra = BitConverter.ToUInt32(c, 0x11C);
-                var toks = new List<string>();
-                if ((flags >> 1 & 1) != 0) toks.Add("spawnRelative");
-                if ((flags >> 2 & 1) != 0) toks.Add("spawnFrustumCull");
-                toks.Add(new[] { "spawnOffsetNone", "spawnOffsetSphere", "spawnOffsetCylinder", "spawnOffset3" }[(int)(flags >> 4 & 3)]);
-                toks.Add((flags >> 8 & 1) != 0 ? "runRelToOffsetEffectNow"
-                    : new[] { "runRelToWorld", "runRelToSpawn", "runRelToEffect", "runRelToOffset" }[(int)(flags >> 6 & 3)]);
-                if ((flags >> 9 & 1) != 0) toks.Add("useCollision");
-                if ((flags >> 10 & 1) != 0) toks.Add("dieOnTouch");
-                if ((flags >> 11 & 1) != 0) toks.Add("drawPastFog");
-                if ((flags >> 12 & 1) != 0) toks.Add("drawWithViewModel");
-                var extraToks = new List<string>();
-                if ((extra & 1) != 0) extraToks.Add("distribX");
-                if ((extra >> 1 & 1) != 0) extraToks.Add("distribY");
-                if ((extra >> 2 & 1) != 0) extraToks.Add("distribZ");
-                if ((extra >> 3 & 1) != 0) extraToks.Add("teamFriendly");
-                KV("flags", string.Format("0x{0:X8} {1}", flags, string.Join(" ", toks)));
-                KV("extraFlags", string.Format("0x{0:X8} {1}", extra, string.Join(" ", extraToks)));
-
-                // ---- scalars (T7-shifted block) ----
-                if (looping)
-                {
-                    KV("spawnLooping", IPair(0x108));
-                    KV("spawnLoopingSpawnCount", IPair(0x110));
-                }
-                else
-                {
-                    KV("spawnOneShot", IPair(0x108));
-                    KV("spawnLoopingSpawnCount", IPair(0x110));
-                }
-                KV("spawnDelayMsec", IPair(0x120));
-                KV("lifeSpanMsec", IPair(0x128));
-                KV("spawnRange", FPair(0x130));
-                KV("fadeInRange", FPair(0x138));
-                KV("fadeOutRange", FPair(0x140));
-                KV("spawnOrgX", FPair(0x148));
-                KV("spawnOrgY", FPair(0x150));
-                KV("spawnOrgZ", FPair(0x158));
-                KV("spawnOffsetRadius", FPair(0x160));
-                KV("spawnOffsetHeight", FPair(0x168));
-                KV("spawnAnglePitch", DegPair(0x170));
-                KV("spawnAngleYaw", DegPair(0x178));
-                KV("spawnAngleRoll", DegPair(0x180));
-                KV("angleVelPitch", DegMsPair(0x188));
-                KV("angleVelYaw", DegMsPair(0x190));
-                KV("angleVelRoll", DegMsPair(0x198));
-                KV("initialRot", DegPair(0x1A0));
-                KV("gravity", Pair(F0(0x1A8) * 100, F0(0x1AC) * 100));
-                KV("elasticity", FPair(0x1B0));
-                KV("emitDist", FPair(0x1B8));
-                KV("emitDistVariance", FPair(0x1C0));
-                KV("billboardPivot", Pair(F0(0x214) / 2, F0(0x218) / 2));
-                KV("alphaDissolve", N(F0(0x21C)));
-                KV("zFeather", N(F0(0x220)));
-                KV("falloffBeginAngle", I(0x228).ToString());
-                KV("falloffEndAngle", I(0x22C).ToString());
-                KV("spawnFrustumCullRadius", N(F0(0x234)));
-                KV("alphaFadeTimeMsec", I(0x25C).ToString());
-                KV("displacement", c[0x274].ToString());
-                KV("lightingFrac", N(c[0x275] / 255.0));
-
-                // ---- atlas ----
-                KV("atlas", string.Format("behavior 0x{0:X2} index {1} fps {2} loopCount {3} colBits {4} rowBits {5} indexRange {6}",
-                    c[0x265], c[0x266], c[0x267], c[0x268], c[0x269], c[0x26A], c[0x26B]));
-
-                // ---- sounds (60-bit alias hashes inline) ----
-                KV("spawnSound", HashRef(BitConverter.ToUInt64(c, 0xB0), "sound"));
-                KV("followSound", HashRef(BitConverter.ToUInt64(c, 0xB8), "sound"));
-
-                // ---- fx refs ----
-                KV("fxOnImpact", AssetRef(c, 0xC8, instance));
-                KV("fxOnDeath", AssetRef(c, 0xD8, instance));
-                KV("emission", AssetRef(c, 0xE8, instance));
-                KV("attachment", AssetRef(c, 0xF8, instance));
-
-                // ---- visuals ----
-                sb.Append("\tvisuals\n\t{\n");
-                if (elemType == 11)
-                {
-                    // lensFlare: the klf def's GUID sits inline at +0x00
-                    var guid = new byte[16];
-                    Buffer.BlockCopy(c, 0x00, guid, 0, 16);
-                    sb.Append("\t\t\"").Append(new Guid(guid).ToString()).Append("\"\n");
-                }
-                else if (elemType == 15 || elemType == 16)
-                {
-                    // beams: def name(s) at +0x00 (empty for most beamTargets)
-                    var beams = BeamNames(c, visualCount, instance);
-                    if (beams.Count == 0)
-                        beams.Add("");
-                    foreach (var b in beams)
-                        sb.Append("\t\t\"").Append(b).Append("\"\n");
-                }
-                else
-                    foreach (var v in ReadVisuals(c, visualCount, elemType, instance))
-                        sb.Append("\t\t\"").Append(v).Append("\"\n");
-                sb.Append("\t};\n");
-                if (elemType != 11 && elemType != 15 && elemType != 16)
-                {
-                    // +0x40 holds the "|dup" twin material — meaningless for the
-                    // inline-data types (lensFlare GUID / beam name string)
-                    var compute = ReadVisuals(c, visualCount, elemType, instance, 0x40);
-                    if (compute.Count > 0 && compute[0] != "")
-                    {
-                        sb.Append("\tcomputeVisuals\n\t{\n");
-                        foreach (var v in compute)
-                            sb.Append("\t\t\"").Append(v).Append("\"\n");
-                        sb.Append("\t};\n");
-                    }
-                }
-
-                KV("counts", string.Format("visualCount {0} velN {1} velN2 {2} visN {3}", visualCount, velN, c[0x272], visN));
-
-                // ---- graphs ----
-                WriteVelGraphs(sb, c, velN, instance);
-                WriteVisGraphs(sb, c, visN, elemType, instance);
-
-                // ---- unmapped nonzero ranges (nothing gets lost) ----
-                if (elemType != 15 && elemType != 16)
-                {
-                    // for beams +0x00..0x7F is the inline def name, already emitted
-                    HexIfNonZero(sb, "\t", c, 0x08, 0x38, "unk008");
-                    HexIfNonZero(sb, "\t", c, 0x48, 0x38, "unk048");
-                }
-                HexIfNonZero(sb, "\t", c, 0xC0, 0x08, "unk0C0");
-                HexIfNonZero(sb, "\t", c, 0x100, 0x08, "unk100");
-                HexIfNonZero(sb, "\t", c, 0x1C8, 0x4C, "unk1C8");
-                HexIfNonZero(sb, "\t", c, 0x224, 0x04, "unk224");
-                HexIfNonZero(sb, "\t", c, 0x230, 0x04, "unk230");
-                HexIfNonZero(sb, "\t", c, 0x238, 0x24, "unk238");
-                HexIfNonZero(sb, "\t", c, 0x261, 0x03, "unk261");
-                HexIfNonZero(sb, "\t", c, 0x26C, 0x02, "unk26C");
-                HexIfNonZero(sb, "\t", c, 0x26F, 0x02, "unk26F");
-                HexIfNonZero(sb, "\t", c, 0x270, 0x01, "unk270");
-                HexIfNonZero(sb, "\t", c, 0x276, 0x0A, "unk276");
-
-                sb.Append("}\n");
-            }
-
-            private void WriteVelGraphs(StringBuilder sb, byte[] c, int velN, HydraInstance instance)
-            {
-                long velPtr = BitConverter.ToInt64(c, 0x88);
-                if (!IsCanonicalPointer(velPtr))
-                {
-                    for (int half = 0; half < 2; half++)
-                        for (int ax = 0; ax < 3; ax++)
-                            Graph.Flat(0, 0).Write(sb, "velGraph" + half + "XYZ"[ax]);
-                    return;
-                }
-
-                var vel = ReadChunked(instance, velPtr, (velN + 1) * VelRec);
-                var times = SampleTimes(velN);
-                // T7-style encoding: sample = A*scale/(1000*velN)
-                double vmul = 1000.0 * Math.Max(velN, 1);
-                for (int half = 0; half < 2; half++)
-                {
-                    for (int ax = 0; ax < 3; ax++)
-                    {
-                        var a = new double[velN + 1][];
-                        var b = new double[velN + 1][];
-                        for (int s = 0; s <= velN; s++)
-                        {
-                            int o = s * VelRec + half * 0x30;
-                            double bas = BitConverter.ToSingle(vel, o + ax * 4) * vmul;
-                            double amp = BitConverter.ToSingle(vel, o + 12 + ax * 4) * vmul;
-                            a[s] = new[] { bas };
-                            b[s] = new[] { bas + amp };
-                        }
-                        Graph.Factor(times, a, b).Write(sb, "velGraph" + half + "XYZ"[ax]);
-                    }
-                }
-            }
-
-            private void WriteVisGraphs(StringBuilder sb, byte[] c, int visN, int elemType, HydraInstance instance)
-            {
-                long visPtr = BitConverter.ToInt64(c, 0x98);
-                if (!IsCanonicalPointer(visPtr))
-                    return;
-
-                var vis = ReadChunked(instance, visPtr, (visN + 1) * VisRec);
-                var times = SampleTimes(visN);
-                double rmul = 1000.0 * Math.Max(visN, 1) * Rad2Deg;
-
-                double[][] Rgb(int off)
-                {
-                    var vals = new double[visN + 1][];
-                    for (int s = 0; s <= visN; s++)
-                    {
-                        int o = s * VisRec + off;
-                        vals[s] = new[] { vis[o] / 255.0, vis[o + 1] / 255.0, vis[o + 2] / 255.0 };
-                    }
-                    return vals;
-                }
-                double[][] Bytes1(int off)
-                {
-                    var vals = new double[visN + 1][];
-                    for (int s = 0; s <= visN; s++)
-                        vals[s] = new[] { vis[s * VisRec + off] / 255.0 };
-                    return vals;
-                }
-                double[][] Fl(int off, double mul, bool amp = false)
-                {
-                    var vals = new double[visN + 1][];
-                    for (int s = 0; s <= visN; s++)
-                    {
-                        double v = BitConverter.ToSingle(vis, s * VisRec + off) * mul;
-                        if (amp)
-                            v += BitConverter.ToSingle(vis, s * VisRec + off - VisHalf) * mul;
-                        vals[s] = new[] { v };
-                    }
-                    return vals;
-                }
-
-                Graph.Factor(times, Rgb(0x00), Rgb(VisHalf + 0x00)).Write(sb, "colorGraph");
-                Graph.Factor(times, Bytes1(0x03), Bytes1(VisHalf + 0x03)).Write(sb, "alphaGraph");
-                Graph.Factor(times, Fl(0x04, rmul), Fl(VisHalf + 0x04, rmul, true)).Write(sb, "rotGraph");
-                Graph.Factor(times, Fl(0x0C, 2), Fl(VisHalf + 0x0C, 2, true)).Write(sb, "sizeGraph0");
-                Graph.Factor(times, Fl(0x10, 2), Fl(VisHalf + 0x10, 2, true)).Write(sb, "sizeGraph1");
-                Graph.Factor(times, Fl(0x14, 1), Fl(VisHalf + 0x14, 1, true)).Write(sb, "scaleGraph");
-                if (elemType == 8)
-                {
-                    Graph.Factor(times, Fl(0x20, 1), Fl(VisHalf + 0x20, 1, true)).Write(sb, "lightIntensityGraph");
-                    Graph.Factor(times, Fl(0x28, 1), Fl(VisHalf + 0x28, 1, true)).Write(sb, "lightRadiusGraph");
-                    Graph.Factor(times, Fl(0x30, 1), Fl(VisHalf + 0x30, 1, true)).Write(sb, "lightFovGraph");
-                }
-            }
-
+            #region Element readers
             /// <summary>
             /// The beam def NAME(s) of a beamSource/beamTarget elem — same two
             /// forms as T7: visualCount <= 1 ⇒ one char[0x40] name INLINE at
@@ -1235,6 +938,8 @@ namespace HydraX.Library
             private List<string> ReadVisuals(byte[] c, int visualCount, int elemType, HydraInstance instance, int slot = 0x00)
             {
                 var result = new List<string>();
+                // elemType 7 (model) points at xmodels, everything else at materials
+                string prefix = elemType == 7 ? "xmodel" : "material";
                 long ptr = BitConverter.ToInt64(c, slot);
                 if (!IsCanonicalPointer(ptr) || elemType == 8)
                 {
@@ -1243,48 +948,36 @@ namespace HydraX.Library
                 }
 
                 // single visual: ptr -> asset header (hash at +0);
-                // multiple: ptr -> array of asset pointers
-                if (visualCount <= 1)
+                // multiple: ptr -> array of asset pointers.
+                // Decals are the exception: they keep T7's mark array, i.e.
+                // visualCount entries of TWO material pointers (vd/<name> then
+                // its vdd/<name> twin), so the slot ALWAYS points at an array.
+                int ptrCount = elemType == 13 ? visualCount * 2 : visualCount;
+                if (ptrCount <= 1)
                 {
-                    result.Add(ResolveAsset(ptr, instance));
+                    result.Add(ResolveAsset(ptr, instance, prefix));
                 }
                 else
                 {
-                    for (int v = 0; v < visualCount; v++)
+                    for (int v = 0; v < ptrCount; v++)
                     {
                         var entry = instance.Reader.ReadInt64(ptr + v * 8);
-                        result.Add(IsCanonicalPointer(entry) ? ResolveAsset(entry, instance) : "");
+                        result.Add(IsCanonicalPointer(entry) ? ResolveAsset(entry, instance, prefix) : "");
                     }
                 }
                 return result;
             }
 
             /// <summary>
-            /// Resolves an asset header pointer to a name via its inline 60-bit
-            /// hash (material/xmodel/fx all store it at +0)
+            /// Resolves an asset header pointer to a name via its inline name
+            /// hash (material/xmodel/fx all store it at +0). `prefix` is the
+            /// asset type the slot points at, so an unresolved hash is spelled
+            /// the same way the tool that exports that type spells it.
             /// </summary>
-            private string ResolveAsset(long ptr, HydraInstance instance)
+            private string ResolveAsset(long ptr, HydraInstance instance, string prefix)
             {
                 var raw = (ulong)instance.Reader.ReadInt64(ptr);
-                if (raw == 0)
-                    return "";
-                var hash = raw & HashMask;
-                return HashIndex.TryGetValue(hash, out var name) ? name : string.Format("hash_{0:x}", hash);
-            }
-
-            private string AssetRef(byte[] c, int off, HydraInstance instance)
-            {
-                long ptr = BitConverter.ToInt64(c, off);
-                if (!IsCanonicalPointer(ptr))
-                    return "\"\"";
-                return "\"" + ResolveAsset(ptr, instance) + "\"";
-            }
-
-            private static string HashRef(ulong raw, string prefix)
-            {
-                if (raw == 0)
-                    return "\"\"";
-                return "\"" + GetHashName(raw & HashMask, prefix) + "\"";
+                return raw == 0 ? "" : GetHashName(raw, prefix);
             }
 
             private static double[] SampleTimes(int n)
@@ -1296,23 +989,6 @@ namespace HydraX.Library
             }
 
             private static double F(byte[] b, int off) => BitConverter.ToSingle(b, off);
-
-            private static void HexIfNonZero(StringBuilder sb, string indent, byte[] data, int off, int len, string label)
-            {
-                if (off + len > data.Length)
-                    len = data.Length - off;
-                if (len <= 0)
-                    return;
-                bool any = false;
-                for (int i = 0; i < len; i++)
-                    if (data[off + i] != 0) { any = true; break; }
-                if (!any)
-                    return;
-                sb.Append(indent).Append(label).Append(' ');
-                for (int i = 0; i < len; i++)
-                    sb.Append(data[off + i].ToString("X2"));
-                sb.Append(";\n");
-            }
             #endregion
 
             #region RawDumps

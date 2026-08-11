@@ -17,8 +17,10 @@ namespace HydraX.Library
     /// A running executable cannot overwrite itself, so the swap is done by a
     /// batch file: it waits for this process to exit, backs up the files it is
     /// about to replace, copies the new ones in, restores the backup if any copy
-    /// fails, and relaunches. The hash dictionaries are left alone; they are not
-    /// part of a binary update.
+    /// fails, and relaunches. Everything the release ships is installed,
+    /// including the hash dictionaries, which grow with every release. Files the
+    /// user put there themselves are never in the payload, so they are never
+    /// touched.
     /// </remarks>
     public static class FiggleUpdater
     {
@@ -29,9 +31,77 @@ namespace HydraX.Library
         public const string Repo = "FiggleFX";
 
         /// <summary>
-        /// Files the updater never touches, relative to the payload root
+        /// Names the updater never installs, relative to the payload root. These
+        /// are the user's own state, written next to the exe at runtime: a
+        /// release should never carry them, and if one ever does by mistake it
+        /// must not overwrite what the user has.
         /// </summary>
-        private static readonly string[] Excluded = { "hashes" };
+        private static readonly string[] Excluded = { "Settings.json", "Log.txt", "exported_files" };
+
+        /// <summary>
+        /// The folder a release ships its hash dictionaries in.
+        /// </summary>
+        /// <remarks>
+        /// NOT "hashes", deliberately, and this must not change: the updater
+        /// that installs a release is the OLD build's, and every build up to
+        /// 1.1.1 skipped a top-level "hashes" folder in the payload, so a
+        /// release shipping them under that name can never deliver them to the
+        /// users who need them most. Under any other name they install like any
+        /// other file, and <see cref="InstallShippedHashes"/> moves them into
+        /// hashes\ on the next start.
+        /// </remarks>
+        public const string HashPayloadFolder = "hashes_update";
+
+        /// <summary>
+        /// Moves the dictionaries a release shipped in
+        /// <see cref="HashPayloadFolder"/> into hashes\, replacing the shipped
+        /// files of the same name and leaving any the user added alone, then
+        /// removes the folder.
+        /// </summary>
+        /// <returns>How many files were installed; 0 when there was nothing to do</returns>
+        public static int InstallShippedHashes()
+        {
+            var install = AppDomain.CurrentDomain.BaseDirectory;
+            var source = Path.Combine(install, HashPayloadFolder);
+
+            if (!Directory.Exists(source))
+                return 0;
+
+            var target = Path.Combine(install, "hashes");
+            Directory.CreateDirectory(target);
+
+            int installed = 0;
+            bool complete = true;
+
+            // Flat on purpose: a dictionary folder has no subfolders, and the
+            // loader only reads the top level of it either way
+            foreach (var file in Directory.GetFiles(source))
+            {
+                try
+                {
+                    File.Copy(file, Path.Combine(target, Path.GetFileName(file)), true);
+                    File.Delete(file);
+                    installed++;
+                }
+                catch
+                {
+                    // Read-only install, file in use: leave the folder behind so
+                    // the loader can still read it and the next start can retry
+                    complete = false;
+                }
+            }
+
+            if (complete)
+            {
+                try
+                {
+                    Directory.Delete(source, true);
+                }
+                catch { }
+            }
+
+            return installed;
+        }
 
         /// <summary>
         /// Gets the page to send the user to when an automatic update isn't possible

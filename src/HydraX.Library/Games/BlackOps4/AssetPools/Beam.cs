@@ -56,7 +56,7 @@ namespace HydraX.Library
                     if (rawHash == 0 || (rawHash >> 60) == 0 || IsNullAsset((long)rawHash))
                         continue;
 
-                    var name = GetHashName(rawHash & HashMask, "beam");
+                    var name = GetHashName(rawHash, "beam");
 
                     int segments = instance.Reader.ReadInt32(address + 0x20);
                     float maxLength = BitConverter.ToSingle(instance.Reader.ReadBytes(address + 0x2C, 4), 0);
@@ -268,7 +268,7 @@ namespace HydraX.Library
             {
                 if (!IsCanonicalPointer(address))
                     return null;
-                var hash = (ulong)instance.Reader.ReadInt64(address) & HashMask;
+                var hash = (ulong)instance.Reader.ReadInt64(address) & NameBits;
                 if (hash == 0)
                     return null;
                 var name = GetHashName(hash, "material");
@@ -283,7 +283,7 @@ namespace HydraX.Library
             {
                 if (!IsCanonicalPointer(address))
                     return null;
-                var hash = (ulong)instance.Reader.ReadInt64(address) & HashMask;
+                var hash = (ulong)instance.Reader.ReadInt64(address) & NameBits;
                 return hash == 0 ? null : GetHashName(hash, "fx");
             }
 

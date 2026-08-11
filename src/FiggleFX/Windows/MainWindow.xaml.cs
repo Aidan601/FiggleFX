@@ -51,7 +51,10 @@ namespace HydraX
             Instance.Settings.Load("Settings.json");
             FxPathsCheckBox.IsChecked = Instance.Settings["ExportFxPaths", "Yes"] == "Yes";
             AssetListCheckBox.IsChecked = Instance.Settings["ExportAssetList", "Yes"] == "Yes";
-            Bo4FxCheckBox.IsChecked = Instance.Settings["ExportBO4FX", "No"] == "Yes";
+            BlackOps4.NameStyle = BlackOps4.ParseNameStyle(Instance.Settings["HashNameStyle", "Saluki"]);
+            GreyhoundNamesRadio.IsChecked = BlackOps4.NameStyle == BlackOps4.HashNameStyle.Greyhound;
+            SalukiNamesRadio.IsChecked = !GreyhoundNamesRadio.IsChecked;
+            SettingsLoaded = true;
             Log("FiggleFX - Log Session Begin", "BEGIN");
 
             try
@@ -61,6 +64,20 @@ namespace HydraX
             catch
             {
                 LogStream = null;
+            }
+
+            // A release ships its dictionaries beside hashes\ so that older
+            // updaters install them; this is the hand-off into hashes\ proper
+            try
+            {
+                var installed = FiggleUpdater.InstallShippedHashes();
+
+                if (installed > 0)
+                    Log(string.Format("Installed {0} hash dictionaries shipped with this version", installed), "INFO");
+            }
+            catch (Exception exception)
+            {
+                Log(string.Format("Could not install the shipped hash dictionaries:\n\n{0}", exception), "ERROR");
             }
 
             // Started on Loaded rather than here: the update prompt is owned by
@@ -162,6 +179,38 @@ namespace HydraX
 
             Instance.Settings[box.Tag.ToString()] = box.IsChecked == true ? "Yes" : "No";
             Instance.Settings.Save("Settings.json");
+        }
+
+        /// <summary>
+        /// True once the constructor has pushed Settings.json into the toggles,
+        /// so their initial Checked events don't write back or reload
+        /// </summary>
+        private bool SettingsLoaded = false;
+
+        /// <summary>
+        /// Switches how unresolved BO4 name hashes are spelled (Saluki vs
+        /// Greyhound). Names are baked at pool-load time, so a live game is
+        /// re-read to respell the list; exports pick it up either way.
+        /// </summary>
+        private void HashNameStyleChanged(object sender, RoutedEventArgs e)
+        {
+            if (!SettingsLoaded)
+                return;
+
+            var style = GreyhoundNamesRadio.IsChecked == true ?
+                BlackOps4.HashNameStyle.Greyhound :
+                BlackOps4.HashNameStyle.Saluki;
+
+            if (style == BlackOps4.NameStyle)
+                return;
+
+            BlackOps4.NameStyle = style;
+            Instance.Settings["HashNameStyle"] = style.ToString();
+            Instance.Settings.Save("Settings.json");
+
+            // Only a BO4 attach has hashed names to respell
+            if (Instance.Game is BlackOps4 && Instance.Assets.Count > 0)
+                OpenGameClick(sender, e);
         }
 
         /// <summary>

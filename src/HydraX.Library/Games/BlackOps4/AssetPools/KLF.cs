@@ -73,7 +73,7 @@ namespace HydraX.Library
                     // +0x18 hashes the flare's real lf_* name (BO3 lost these
                     // at compile; T8 kept the hash) — display it when the
                     // dictionary resolves it, else fall back to the uuid
-                    var nameHash = (ulong)instance.Reader.ReadInt64(address + 0x18) & HashMask;
+                    var nameHash = (ulong)instance.Reader.ReadInt64(address + 0x18) & NameBits;
                     var name = GetHashName(nameHash, "klf");
                     if (name.StartsWith("klf_"))
                         name = uuid;
@@ -330,7 +330,7 @@ namespace HydraX.Library
             {
                 if (!IsCanonicalPointer(imageAddress))
                     return null;
-                var hash = (ulong)instance.Reader.ReadInt64(imageAddress + 0x20) & HashMask;
+                var hash = (ulong)instance.Reader.ReadInt64(imageAddress + 0x20) & NameBits;
                 return hash == 0 ? null : GetHashName(hash, "image");
             }
 
