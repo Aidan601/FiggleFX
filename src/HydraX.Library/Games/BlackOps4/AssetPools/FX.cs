@@ -433,7 +433,8 @@ namespace HydraX.Library
                 // ---- graphs from the sample arrays ----
                 Graph[] vel0 = null, vel1 = null;
                 Graph rotG = null, size0 = null, size1 = null, scaleG = null,
-                      colorG = null, alphaG = null, lightI = null, lightR = null, lightF = null;
+                      colorG = null, alphaG = null, lightI = null, lightR = null, lightF = null,
+                      inhG = null, cssG = null;
 
                 long velPtr = BitConverter.ToInt64(c, 0x88);
                 if (IsCanonicalPointer(velPtr))
@@ -516,8 +517,28 @@ namespace HydraX.Library
                     {
                         lightI = Graph.Factor(times, BaseF(0x20, 1), Amp(0x20, 1));
                         lightR = Graph.Factor(times, BaseF(0x28, 1), Amp(0x28, 1));
-                        lightF = Graph.Factor(times, BaseF(0x30, 1), Amp(0x30, 1));
+                        lightF = Graph.Factor(times, BaseF(0x2C, 1), Amp(0x2C, 1));   // fov = half+0x2C (154:3 anchors)
                     }
+                    cssG = Graph.Factor(times, BaseF(0x30, 1), Amp(0x30, 1));          // childSizeScale = half+0x30 (19/20)
+                }
+
+                // inherit samples (+0x90): (inhN+1) FxFloatRange records, base + delta
+                long inhPtr = BitConverter.ToInt64(c, 0x90);
+                int inhN = c[0x270];
+                if (IsCanonicalPointer(inhPtr))
+                {
+                    var inh = ReadChunked(instance, inhPtr, (inhN + 1) * 8);
+                    var t = SampleTimes(inhN);
+                    var ia = new double[inhN + 1][];
+                    var ib = new double[inhN + 1][];
+                    for (int s = 0; s <= inhN; s++)
+                    {
+                        double bas = BitConverter.ToSingle(inh, s * 8);
+                        double amp = BitConverter.ToSingle(inh, s * 8 + 4);
+                        ia[s] = new[] { bas };
+                        ib[s] = new[] { bas + amp };
+                    }
+                    inhG = Graph.Factor(t, ia, ib);
                 }
 
                 var zero3 = new[] { Graph.Flat(0, 0), Graph.Flat(0, 0), Graph.Flat(0, 0) };
@@ -532,6 +553,8 @@ namespace HydraX.Library
                 lightI = lightI ?? Graph.Flat(10000);
                 lightR = lightR ?? Graph.Flat(100);
                 lightF = lightF ?? Graph.Flat(90);
+                inhG = inhG ?? Graph.Flat(1);
+                cssG = cssG ?? Graph.Flat(1);
 
                 // ---- editor flags: looping from the partition, useRand* from B != A ----
                 var editorFlags = new List<string>();
@@ -547,6 +570,10 @@ namespace HydraX.Library
                 if (scaleG.Differs()) editorFlags.Add("useRandScale");
                 if (colorG.Differs()) editorFlags.Add("useRandColor");
                 if (alphaG.Differs()) editorFlags.Add("useRandAlpha");
+                // enable token mirrors BO3 artist convention: set when the graph is custom
+                bool inhCustom = inhG.Scale != 1 || inhG.Differs()
+                    || inhG.CurveA.Exists(kf => kf[1] != 1.0);
+                if (inhCustom) editorFlags.Add("inheritParentMovementGraphEnable");
 
                 // ---- flags (T8 dword at +0x118 / extra at +0x11C) ----
                 uint flagBits = BitConverter.ToUInt32(c, 0x118);
@@ -563,6 +590,7 @@ namespace HydraX.Library
                 if ((flagBits >> 10 & 1) != 0) flags.Add("dieOnTouch");
                 if ((flagBits >> 11 & 1) != 0) flags.Add("drawPastFog");
                 if ((flagBits >> 12 & 1) != 0) flags.Add("drawWithViewModel");
+                if ((flagBits >> 16 & 1) != 0) flags.Add("inheritParentMovement");   // dev FX_ELEM_INHERIT_PARENT_MOVEMENT, 99% vs anchors
 
                 var extraFlags = new List<string>();
                 if ((extraBits & 1) != 0) extraFlags.Add("distribX");
@@ -586,8 +614,12 @@ namespace HydraX.Library
                 }
                 string SoundName(int off)
                 {
+                    // an ALIAS reference, not a sound file: `soundalias_` is a
+                    // separate namespace from the `sound_` of a file path, and
+                    // neither extractor rips aliases, so the prefix is fixed
+                    // while the hash keeps the Saluki full-63-bit format
                     ulong raw = BitConverter.ToUInt64(c, off);
-                    return raw == 0 ? "" : GetHashName(raw, "sound");
+                    return raw == 0 ? "" : GetHashName(raw, "soundalias");
                 }
                 string fxOnImpact = RefName(0xC8);
                 string fxOnDeath = RefName(0xD8);
@@ -702,7 +734,7 @@ namespace HydraX.Library
                 KV("rotationAxis", "0 0 0 1");
                 KV("gravity", Pair(F0(0x1A8) * 100, F0(0x1AC) * 100));
                 KV("elasticity", FPair(0x1B0));
-                KV("windinfluence", "0");
+                KV("windinfluence", N(F0(0x240)));
                 FlagLine("atlasBehavior", atlas);
                 KV("atlasIndex", c[0x266].ToString());
                 KV("atlasFps", c[0x267].ToString());
@@ -717,18 +749,27 @@ namespace HydraX.Library
                 size0.Write(sb, "sizeGraph0");
                 size1.Write(sb, "sizeGraph1");
                 scaleG.Write(sb, "scaleGraph");
-                Graph.Flat(1).Write(sb, "childSizeScaleGraph");    // T8 offset unknown
+                cssG.Write(sb, "childSizeScaleGraph");
                 colorG.Write(sb, "colorGraph");
                 alphaG.Write(sb, "alphaGraph");
                 lightI.Write(sb, "lightIntensityGraph");
                 lightR.Write(sb, "lightRadiusGraph");
                 lightF.Write(sb, "lightFovGraph");
-                Graph.Flat(1).Write(sb, "inheritParentMovementGraph");
+                inhG.Write(sb, "inheritParentMovementGraph");
                 Graph.Flat(1).Write(sb, "attractorGraph");
                 KV("attractorLocalPosition", "0 0 0");
                 KV("lightingFrac", N(c[0x275] / 255.0));
-                KV("collOffset", "0 0 0");
-                KV("collRadius", "0");
+                // collision box collMins +0x1D8 / collMaxs +0x1E4 -> offset+radius form
+                double cr = 0;
+                var coff = new double[3];
+                for (int k = 0; k < 3; k++)
+                {
+                    double lo = F0(0x1D8 + k * 4), hi = F0(0x1E4 + k * 4);
+                    coff[k] = (lo + hi) / 2;
+                    cr += (hi - lo) / 6;
+                }
+                KV("collOffset", Pair(coff[0], coff[1]) + " " + N(coff[2]));
+                KV("collRadius", N(cr));
                 KV("fxOnImpact", string.Format("\"{0}\"", fxOnImpact));
                 KV("fxOnDeath", string.Format("\"{0}\"", fxOnDeath));
                 KV("displacement", c[0x274].ToString());
@@ -740,15 +781,30 @@ namespace HydraX.Library
                 KV("attachment", string.Format("\"{0}\"", attachment));
                 KV("attachmentDensity", "1 0");
                 KV("attachmentSizeForDensity", "1");
-                KV("trailSplitDist", "0");      // T8 trail struct (+0x80) not decoded
-                KV("trailScrollTime", "0");
-                KV("trailRepeatDist", "0");
-                KV("trailFadeInDist", "0");
-                KV("trailFadeOutDist", "0");
-                KV("alphafadetimemsec", I(0x25C).ToString());
-                KV("maxwind_mag", "0");
-                KV("maxwind_life", "0");
-                KV("maxwind_interval", "1");
+                // trail (+0x80 extended -> FxTrailDef, dev layout verbatim):
+                // scrollTimeMsec/repeatDist/splitDist i32, fadeIn/OutDist f32
+                long trailPtr = c[0x264] == 5 ? BitConverter.ToInt64(c, 0x80) : 0;
+                byte[] td = trailPtr != 0 ? instance.Reader.ReadBytes(trailPtr, 0x14) : null;
+                if (td != null && td.Length >= 0x14)
+                {
+                    KV("trailSplitDist", BitConverter.ToInt32(td, 0x08).ToString());
+                    KV("trailScrollTime", N(BitConverter.ToInt32(td, 0x00) / 1000.0));
+                    KV("trailRepeatDist", BitConverter.ToInt32(td, 0x04).ToString());
+                    KV("trailFadeInDist", N(BitConverter.ToSingle(td, 0x0C)));
+                    KV("trailFadeOutDist", N(BitConverter.ToSingle(td, 0x10)));
+                }
+                else
+                {
+                    KV("trailSplitDist", "0");
+                    KV("trailScrollTime", "0");
+                    KV("trailRepeatDist", "0");
+                    KV("trailFadeInDist", "0");
+                    KV("trailFadeOutDist", "0");
+                }
+                KV("alphafadetimemsec", BitConverter.ToUInt16(c, 0x25C).ToString());
+                KV("maxwind_mag", BitConverter.ToUInt16(c, 0x25E).ToString());
+                KV("maxwind_life", BitConverter.ToUInt16(c, 0x262).ToString());
+                KV("maxwind_interval", BitConverter.ToUInt16(c, 0x260).ToString());
                 sb.Append("\telemSpawnSound\n\t{\n");
                 if (spawnSound != "") sb.Append("\t\t\"").Append(spawnSound).Append("\"\n");
                 sb.Append("\t};\n");
@@ -763,13 +819,22 @@ namespace HydraX.Library
                 KV("zFeather", N(F0(0x220)));
                 KV("falloffBeginAngle", I(0x228).ToString());
                 KV("falloffEndAngle", I(0x22C).ToString());
-                KV("lfSourceDir", "1 0 0");
-                KV("lfSourceSize", "15");
+                if (elemType == 11)
+                {
+                    // inline FxLensFlareVisualDef tail after the GUID
+                    KV("lfSourceDir", Pair(F0(0x10), F0(0x14)) + " " + N(F0(0x18)));
+                    KV("lfSourceSize", N(F0(0x1C)));
+                }
+                else
+                {
+                    KV("lfSourceDir", "1 0 0");
+                    KV("lfSourceSize", "15");
+                }
                 KV("billboardPivot", Pair(F0(0x214) / 2, -F0(0x218) / 2));
                 KV("levelOfDetail", "0");
                 sb.Append('\t').Append(typeName).Append("\n\t{\n");
                 if (elemType == 8)
-                    WriteDefaultLightDef(sb, section + n);   // embedded lightdefs don't survive compilation
+                    WriteDefaultLightDef(sb, section + n, ReadLightDefOverrides(c, instance));
                 else
                     foreach (var v in visuals)
                         sb.Append("\t\t\"").Append(v).Append("\"\n");
@@ -846,7 +911,7 @@ namespace HydraX.Library
             /// empty "" block here derails Radiant's parser for the whole file. The
             /// light's actual behaviour is in the lightIntensity/Radius/Fov graphs.
             /// </summary>
-            private static void WriteDefaultLightDef(StringBuilder sb, string seed)
+            private static void WriteDefaultLightDef(StringBuilder sb, string seed, Dictionary<string, string> overrides = null)
             {
                 uint hash = 2166136261;
                 foreach (char ch in seed)
@@ -895,8 +960,46 @@ namespace HydraX.Library
                     "volumetricSampleCount 8",
                 };
                 foreach (var line in lines)
-                    sb.Append("\t\t\t").Append(line).Append('\n');
+                {
+                    string outLine = line;
+                    if (overrides != null)
+                    {
+                        int sp = line.IndexOf(' ');
+                        string key = sp > 0 ? line.Substring(0, sp) : line;
+                        if (overrides.TryGetValue(key, out var v))
+                            outLine = key + " " + v;
+                    }
+                    sb.Append("\t\t\t").Append(outLine).Append('\n');
+                }
                 sb.Append("\t\t};\n");
+            }
+
+            /// <summary>
+            /// The solidly-mapped fields of the retail light struct behind a
+            /// dynamicLight2 elem's +0x00 pointer (dev GfxLightDescription;
+            /// fit vs 193 BO3 embedded-lightdef anchors — see docs/t8-fx.md):
+            /// +0xD8 cut_on, +0xDC radius (187/193), +0x138 far_edge (70/70),
+            /// +0x350 penumbraRadius. Type/color did not fit and stay default.
+            /// </summary>
+            private Dictionary<string, string> ReadLightDefOverrides(byte[] c, HydraInstance instance)
+            {
+                var d = new Dictionary<string, string>();
+                long p = BitConverter.ToInt64(c, 0x00);
+                if (!IsCanonicalPointer(p))
+                    return d;
+                var b = instance.Reader.ReadBytes(p + 0xD8, 8);
+                if (b != null && b.Length == 8)
+                {
+                    d["cut_on"] = N(BitConverter.ToSingle(b, 0));
+                    d["radius"] = N(BitConverter.ToSingle(b, 4));
+                }
+                var fe = instance.Reader.ReadBytes(p + 0x138, 4);
+                if (fe != null && fe.Length == 4)
+                    d["far_edge"] = N(BitConverter.ToSingle(fe, 0));
+                var pr = instance.Reader.ReadBytes(p + 0x350, 4);
+                if (pr != null && pr.Length == 4)
+                    d["penumbraRadius"] = N(BitConverter.ToSingle(pr, 0));
+                return d;
             }
             #endregion
 

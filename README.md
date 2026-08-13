@@ -66,9 +66,11 @@ or Saluki) and set it up in APE. `<name>_assets.txt` is the checklist.
   key/value block doesn't survive compilation, so a default OMNI block is
   written in its place. Trail meshes (`trailDef` verts/inds) are not emitted.
 - **BO4**: element types 9, 10 and 12 have no T7 counterpart, so those emitters
-  are skipped in the `.efx`. Trail parameters and the inherit/attractor sample
-  arrays aren't decoded, so they port at their defaults. `computeVisuals`, a `|dup` twin of the primary material, is
-  dropped, which is lossless.
+  are skipped in the `.efx`. The attractor sample array isn't decoded, so
+  `attractorGraph` ports at its default. An embedded `dynamicLight2` lightdef
+  keeps its cut-on, radius, far edge and penumbra, the rest of the block is
+  written at OMNI defaults. `computeVisuals`, a `|dup` twin of the primary
+  material, is dropped, which is lossless.
 - **Beams**: a beam def GDT carries the material, effects, size, color, timing
   and waveform values. T8's width/colour curves have no BO3 equivalent and are
   flattened to their base values, and the uvMode/curveType/beamShape/collision
