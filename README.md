@@ -25,6 +25,13 @@ cover is written as a placeholder like `material_4674c74919cd08f7`. Set
 **Hashes** to whichever tool you rip the referenced materials, images and
 models with, and the names line up on both sides.
 
+Radiant only renders effect materials whose name starts with `gfx`, so
+hash-named materials referenced by an effect are written into the `.efx` as
+`gfx8_material_<hash>` and the material must be set up in APE under that
+name. The asset list keeps the raw name and notes the rename beside it
+(`material_<hash> -> gfx8_material_<hash>`). Materials that belong to models
+keep their normal names.
+
 ## Requirements
 
 - Windows x64, **.NET Framework 4.8**
@@ -62,18 +69,19 @@ or Saluki) and set it up in APE. `<name>_assets.txt` is the checklist.
 - **Both**: emitter names aren't stored in compiled data, so emitters are
   labelled by index. `atlasFps > 255` and partial atlas grids are destroyed by
   the game's own compiler and cannot be recovered.
-- **BO3**: `dynamicLight2` light graphs are exact, but the Radiant lightdef
-  key/value block doesn't survive compilation, so a default OMNI block is
-  written in its place. Trail meshes (`trailDef` verts/inds) are not emitted.
-- **BO4**: element types 9, 10 and 12 have no T7 counterpart, so those emitters
-  are skipped in the `.efx`. The attractor sample array isn't decoded, so
-  `attractorGraph` ports at its default. An embedded `dynamicLight2` lightdef
-  keeps its cut-on, radius, far edge and penumbra, the rest of the block is
-  written at OMNI defaults. `computeVisuals`, a `|dup` twin of the primary
-  material, is dropped, which is lossless.
-- **Beams**: a beam def GDT carries the material, effects, size, color, timing
-  and waveform values. T8's width/colour curves have no BO3 equivalent and are
-  flattened to their base values, and the uvMode/curveType/beamShape/collision
+- **BO3**: `dynamicLight2` emitters are reconstructed including the embedded
+  Radiant lightdef (type, colour, radius, falloff, fov and friends, ~99% of
+  key values exact); only shadowmapScale, the culling distances and a SPOT
+  light's angles stay at template defaults.
+- **BO4**: element type 12 is new to BO4 and has no T7 counterpart, so those
+  emitters are skipped in the `.efx`. BO4 compiles an embedded `dynamicLight2`
+  lightdef down to its baked runtime form: the radius and light colour are
+  recovered, the rest of the block is written at OMNI defaults.
+  `computeVisuals`, a `|dup` twin of the primary material, is dropped, which
+  is lossless.
+- **Beams**: a beam def GDT carries the material, effects, size, color, timing,
+  curve type, shape, UV mode and waveform values. T8's width/colour curves have
+  no BO3 equivalent and are flattened to their base values, and the collision
   settings aren't located in the compiled data yet, so they stay at GDF
   defaults. Beam materials are often hash-named until the dictionaries grow.
 - **Lens flares**: positions/colour-depth fade distances, max angle and rotation

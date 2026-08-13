@@ -49,11 +49,15 @@ namespace HydraX.Library
             private const int VelRec = 0x60;      // vel sample record (T5/T7 layout)
             private const double Rad2Deg = 180.0 / Math.PI;
 
+            // 9/10 are dev FX_ELEM_TYPE_LEGACY_OMNI_LIGHT / _DYNAMIC_SOUND,
+            // named by their T7 .efx block tokens ("light"/"dynamicSound" —
+            // both empty-visual types); 12 is retail-new (post-2017), the dev
+            // build cannot name it and there is nothing to port it to
             private static readonly string[] ElemTypeNames =
             {
                 "billboardSprite", "orientedSprite", "rotatedSprite", "tail",
-                "line", "trail", "cloud", "model", "dynamicLight2", "type9",
-                "type10", "lensFlare", "type12", "decal", "runner",
+                "line", "trail", "cloud", "model", "dynamicLight2", "light",
+                "dynamicSound", "lensFlare", "type12", "decal", "runner",
                 "beamSource", "beamTarget",
             };
 
@@ -64,7 +68,7 @@ namespace HydraX.Library
             private static readonly string[] ElemTypeShort =
             {
                 "Sprite", "Oriented", "Rotated", "Tail", "Line", "Trail",
-                "Cloud", "Model", "Light", "Type9", "Type10", "Flare",
+                "Cloud", "Model", "Light", "OmniLight", "DynSound", "Flare",
                 "Type12", "Decal", "Runner", "BeamSrc", "BeamTgt",
             };
 
@@ -315,6 +319,7 @@ namespace HydraX.Library
 
                 Write(path + ".efx", efx);
 
+
                 if (instance.Settings["ExportAssetList", "Yes"] == "Yes")
                     File.WriteAllText(path + "_assets.txt", AssetList(name, assets));
 
@@ -434,7 +439,7 @@ namespace HydraX.Library
                 Graph[] vel0 = null, vel1 = null;
                 Graph rotG = null, size0 = null, size1 = null, scaleG = null,
                       colorG = null, alphaG = null, lightI = null, lightR = null, lightF = null,
-                      inhG = null, cssG = null;
+                      inhG = null, cssG = null, attG = null;
 
                 long velPtr = BitConverter.ToInt64(c, 0x88);
                 if (IsCanonicalPointer(velPtr))
@@ -541,6 +546,26 @@ namespace HydraX.Library
                     inhG = Graph.Factor(t, ia, ib);
                 }
 
+                // attractor samples (+0xA0): (attN+1) FxFloatRange records like
+                // inherit, attN = u8 +0x271 (53/53 flag-0x40000 elems corpus-wide)
+                long attPtr = BitConverter.ToInt64(c, 0xA0);
+                int attN = c[0x271];
+                if (IsCanonicalPointer(attPtr))
+                {
+                    var att = ReadChunked(instance, attPtr, (attN + 1) * 8);
+                    var t = SampleTimes(attN);
+                    var attA = new double[attN + 1][];
+                    var attB = new double[attN + 1][];
+                    for (int s = 0; s <= attN; s++)
+                    {
+                        double bas = BitConverter.ToSingle(att, s * 8);
+                        double amp = BitConverter.ToSingle(att, s * 8 + 4);
+                        attA[s] = new[] { bas };
+                        attB[s] = new[] { bas + amp };
+                    }
+                    attG = Graph.Factor(t, attA, attB);
+                }
+
                 var zero3 = new[] { Graph.Flat(0, 0), Graph.Flat(0, 0), Graph.Flat(0, 0) };
                 vel0 = vel0 ?? zero3;
                 vel1 = vel1 ?? zero3;
@@ -555,6 +580,7 @@ namespace HydraX.Library
                 lightF = lightF ?? Graph.Flat(90);
                 inhG = inhG ?? Graph.Flat(1);
                 cssG = cssG ?? Graph.Flat(1);
+                attG = attG ?? Graph.Flat(1);
 
                 // ---- editor flags: looping from the partition, useRand* from B != A ----
                 var editorFlags = new List<string>();
@@ -574,6 +600,7 @@ namespace HydraX.Library
                 bool inhCustom = inhG.Scale != 1 || inhG.Differs()
                     || inhG.CurveA.Exists(kf => kf[1] != 1.0);
                 if (inhCustom) editorFlags.Add("inheritParentMovementGraphEnable");
+                if (attG.Differs()) editorFlags.Add("useRandomAttractorGraph");
 
                 // ---- flags (T8 dword at +0x118 / extra at +0x11C) ----
                 uint flagBits = BitConverter.ToUInt32(c, 0x118);
@@ -591,6 +618,7 @@ namespace HydraX.Library
                 if ((flagBits >> 11 & 1) != 0) flags.Add("drawPastFog");
                 if ((flagBits >> 12 & 1) != 0) flags.Add("drawWithViewModel");
                 if ((flagBits >> 16 & 1) != 0) flags.Add("inheritParentMovement");   // dev FX_ELEM_INHERIT_PARENT_MOVEMENT, 99% vs anchors
+                if ((flagBits >> 18 & 1) != 0) flags.Add("attractorGraphEnable");    // dev FX_ELEM_USE_ATTRACTOR_GRAPH
 
                 var extraFlags = new List<string>();
                 if ((extraBits & 1) != 0) extraFlags.Add("distribX");
@@ -634,24 +662,35 @@ namespace HydraX.Library
                 // computeVisuals (+0x40) is a "|dup" twin of the same material and
                 // has no T7 equivalent — dropping it is lossless.
                 var visuals = new List<string>();
+                List<byte[]> lfRecords = null;
                 if (elemType == 11)
                 {
-                    // lensFlare doesn't reference a material: the 16 bytes at
-                    // +0x00 are the flare def's GUID inline (little-endian GUID
-                    // struct) — the "uuid" key of the .klf source. 97/97 verified
-                    // against the T8 klf pool (asset name = fnv1a60(uuid)).
-                    var guid = new byte[16];
-                    Buffer.BlockCopy(c, 0x00, guid, 0, 16);
-                    visuals.Add(new Guid(guid).ToString());
+                    // lensFlare doesn't reference a material: FxLensFlareVisualDef
+                    // record(s) whose GUID is the "uuid" key of the .klf source
+                    // (asset name = fnv1a60(uuid)); see ReadLensFlareRecords for
+                    // the inline-vs-array form
+                    lfRecords = ReadLensFlareRecords(c, visualCount, instance);
+                    foreach (var rec in lfRecords)
+                    {
+                        var guid = new byte[16];
+                        Buffer.BlockCopy(rec, 0, guid, 0, 16);
+                        visuals.Add(new Guid(guid).ToString());
+                    }
                 }
-                else if (elemType == 15 || elemType == 16)
+                else if (elemType == 15)
                 {
-                    // beams: def name(s) at +0x00 (beamTarget usually empty —
-                    // shipping sources write an empty "beamTarget { };" block)
+                    // beamSource: def name(s) at +0x00
                     visuals.AddRange(BeamNames(c, visualCount, instance));
                 }
-                else if (elemType != 8)
+                // elemType 16 (beamTarget) stays EMPTY: no shipping T7 source
+                // ever names a def there (the source's def drives rendering;
+                // targets are anchors) and Radiant is only validated with the
+                // empty block — T8's target-side def names are dropped
+                else if (elemType != 8 && elemType != 9 && elemType != 10)
                 {
+                    // 9 (light) / 10 (dynamicSound) reference no visual —
+                    // their T7 blocks are empty; sound comes from
+                    // elemSpawnSound/elemFollowSound
                     var raw = ReadVisuals(c, visualCount, elemType, instance);
                     if (elemType == 7 || elemType == 14)
                     {
@@ -673,17 +712,38 @@ namespace HydraX.Library
                         }
                     }
                 }
-                // beam blocks are legitimately empty (beamTarget); every other
-                // type gets the "" placeholder Radiant expects
-                if (visuals.Count == 0 && elemType != 15 && elemType != 16)
+                // beam, light and dynamicSound blocks are legitimately empty;
+                // every other type gets the "" placeholder Radiant expects
+                if (visuals.Count == 0 && elemType != 15 && elemType != 16 &&
+                    elemType != 9 && elemType != 10)
                     visuals.Add("");
 
                 // ---- record what this emitter references ----
                 string visualKind = elemType == 7 ? "xmodel" : elemType == 14 ? "fx" : elemType == 11 ? "lensflare"
                                   : (elemType == 15 || elemType == 16) ? "beam" : "material";
-                foreach (var v in visuals)
-                    if (v != "")
+                for (int vi = 0; vi < visuals.Count; vi++)
+                {
+                    var v = visuals[vi];
+                    if (v == "")
+                        continue;
+                    if (visualKind == "material" && IsHashPlaceholder(v))
+                    {
+                        // Radiant only renders fx materials whose name starts
+                        // with gfx (user-verified; stock sources are
+                        // 10,177/10,190 gfx_*) — the .efx spells unresolved FX
+                        // materials gfx8_<placeholder> and the APE material
+                        // must be created under that name. The assets row
+                        // keeps the raw name with the rename noted beside it.
+                        // Model-side materials are not .efx refs and are
+                        // untouched.
+                        assets.Add(visualKind + " " + v + " -> gfx8_" + v);
+                        visuals[vi] = "gfx8_" + v;
+                    }
+                    else
+                    {
                         assets.Add(visualKind + " " + v);
+                    }
+                }
                 foreach (var r in new[] { fxOnImpact, fxOnDeath, emission, attachment })
                     if (r != "")
                         assets.Add("fx " + r);
@@ -756,8 +816,13 @@ namespace HydraX.Library
                 lightR.Write(sb, "lightRadiusGraph");
                 lightF.Write(sb, "lightFovGraph");
                 inhG.Write(sb, "inheritParentMovementGraph");
-                Graph.Flat(1).Write(sb, "attractorGraph");
-                KV("attractorLocalPosition", "0 0 0");
+                attG.Write(sb, "attractorGraph");
+                // +0x1F0 vec3 attractorLocalPosition (dev order); union space
+                // for non-attractor elems, so gate on the flag
+                if ((BitConverter.ToUInt32(c, 0x118) >> 18 & 1) != 0)
+                    KV("attractorLocalPosition", Pair(F0(0x1F0), F0(0x1F4)) + " " + N(F0(0x1F8)));
+                else
+                    KV("attractorLocalPosition", "0 0 0");
                 KV("lightingFrac", N(c[0x275] / 255.0));
                 // collision box collMins +0x1D8 / collMaxs +0x1E4 -> offset+radius form
                 double cr = 0;
@@ -782,9 +847,12 @@ namespace HydraX.Library
                 KV("attachmentDensity", "1 0");
                 KV("attachmentSizeForDensity", "1");
                 // trail (+0x80 extended -> FxTrailDef, dev layout verbatim):
-                // scrollTimeMsec/repeatDist/splitDist i32, fadeIn/OutDist f32
+                // scrollTimeMsec/repeatDist/splitDist i32, fadeIn/OutDist f32,
+                // then the cross-section mesh counts/pointers up to +0x30
                 long trailPtr = c[0x264] == 5 ? BitConverter.ToInt64(c, 0x80) : 0;
-                byte[] td = trailPtr != 0 ? instance.Reader.ReadBytes(trailPtr, 0x14) : null;
+                byte[] td = trailPtr != 0
+                    ? instance.Reader.ReadBytes(trailPtr, 0x30) ?? instance.Reader.ReadBytes(trailPtr, 0x14)
+                    : null;
                 if (td != null && td.Length >= 0x14)
                 {
                     KV("trailSplitDist", BitConverter.ToInt32(td, 0x08).ToString());
@@ -821,15 +889,21 @@ namespace HydraX.Library
                 KV("falloffEndAngle", I(0x22C).ToString());
                 if (elemType == 11)
                 {
-                    // inline FxLensFlareVisualDef tail after the GUID
-                    KV("lfSourceDir", Pair(F0(0x10), F0(0x14)) + " " + N(F0(0x18)));
-                    KV("lfSourceSize", N(F0(0x1C)));
+                    // FxLensFlareVisualDef tail of the first record
+                    var r0 = lfRecords[0];
+                    KV("lfSourceDir", Pair(BitConverter.ToSingle(r0, 0x10), BitConverter.ToSingle(r0, 0x14))
+                        + " " + N(BitConverter.ToSingle(r0, 0x18)));
+                    KV("lfSourceSize", N(BitConverter.ToSingle(r0, 0x1C)));
                 }
                 else
                 {
                     KV("lfSourceDir", "1 0 0");
                     KV("lfSourceSize", "15");
                 }
+                // optional cross-section mesh, between lfSourceSize and
+                // billboardPivot like the shipping sources
+                if (elemType == 5)
+                    WriteTrailDef(sb, td, instance, native: false);
                 KV("billboardPivot", Pair(F0(0x214) / 2, -F0(0x218) / 2));
                 KV("levelOfDetail", "0");
                 sb.Append('\t').Append(typeName).Append("\n\t{\n");
@@ -840,6 +914,45 @@ namespace HydraX.Library
                         sb.Append("\t\t\"").Append(v).Append("\"\n");
                 sb.Append("\t};\n");
                 sb.Append("}\n");
+            }
+
+            /// <summary>
+            /// Writes a trail elem's cross-section mesh (FxTrailDef tail: vertCount +0x14,
+            /// verts +0x18, indCount +0x20, inds +0x28; vertex = {vec2 pos, vec2 normal,
+            /// f32 texCoord}, 0x14 bytes). The .efx form drops the compiler-derived
+            /// normals (source rows are "x y texCoord"); the native .bo4fx form keeps all
+            /// five. Writes nothing unless both arrays read fully and sanely.
+            /// </summary>
+            private static void WriteTrailDef(StringBuilder sb, byte[] td, HydraInstance instance, bool native)
+            {
+                if (td == null || td.Length < 0x30)
+                    return;
+                int vertCount = BitConverter.ToInt32(td, 0x14);
+                long vertsPtr = BitConverter.ToInt64(td, 0x18);
+                int indCount = BitConverter.ToInt32(td, 0x20);
+                long indsPtr = BitConverter.ToInt64(td, 0x28);
+                if (vertCount <= 0 || vertCount > 4096 || indCount <= 0 || indCount > 65536 ||
+                    vertsPtr == 0 || indsPtr == 0)
+                    return;
+                var verts = instance.Reader.ReadBytes(vertsPtr, vertCount * 0x14);
+                var inds = instance.Reader.ReadBytes(indsPtr, indCount * 2);
+                if (verts == null || inds == null || verts.Length < vertCount * 0x14 || inds.Length < indCount * 2)
+                    return;
+                sb.Append("\ttrailDef\n\t{\n");
+                for (int v = 0; v < vertCount; v++)
+                {
+                    int o = v * 0x14;
+                    sb.Append("\t\t").Append(N(BitConverter.ToSingle(verts, o)))
+                      .Append(' ').Append(N(BitConverter.ToSingle(verts, o + 4)));
+                    if (native)
+                        sb.Append(' ').Append(N(BitConverter.ToSingle(verts, o + 8)))
+                          .Append(' ').Append(N(BitConverter.ToSingle(verts, o + 12)));
+                    sb.Append(' ').Append(N(BitConverter.ToSingle(verts, o + 16))).Append('\n');
+                }
+                sb.Append("\t} {\n");
+                for (int v = 0; v < indCount; v++)
+                    sb.Append("\t\t").Append(BitConverter.ToUInt16(inds, v * 2)).Append('\n');
+                sb.Append("\t};\n");
             }
 
             /// <summary>
@@ -861,6 +974,34 @@ namespace HydraX.Library
                           .Append(StripHashPrefix(entry.Substring(space + 1))).Append("\r\n");
                 }
                 return sb.ToString();
+            }
+
+            /// <summary>
+            /// True for an unresolved-name placeholder in either naming style
+            /// ("material_&lt;16 hex&gt;" Saluki / "xmaterial_&lt;15 hex&gt;" Greyhound /
+            /// "hash_&lt;hex&gt;").
+            /// </summary>
+            private static bool IsHashPlaceholder(string name)
+            {
+                int us = name.IndexOf('_');
+                if (us <= 0)
+                    return false;
+                switch (name.Substring(0, us))
+                {
+                    case "material":
+                    case "xmaterial":
+                    case "hash":
+                        break;
+                    default:
+                        return false;
+                }
+                string rest = name.Substring(us + 1);
+                if (rest.Length < 12 || rest.Length > 16)
+                    return false;
+                foreach (char c in rest)
+                    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
+                        return false;
+                return true;
             }
 
             /// <summary>
@@ -975,11 +1116,18 @@ namespace HydraX.Library
             }
 
             /// <summary>
-            /// The solidly-mapped fields of the retail light struct behind a
-            /// dynamicLight2 elem's +0x00 pointer (dev GfxLightDescription;
-            /// fit vs 193 BO3 embedded-lightdef anchors — see docs/t8-fx.md):
-            /// +0xD8 cut_on, +0xDC radius (187/193), +0x138 far_edge (70/70),
-            /// +0x350 penumbraRadius. Type/color did not fit and stay default.
+            /// The recoverable fields of the retail light struct behind a
+            /// dynamicLight2 elem's +0x00 pointer. Retail stores a BAKED
+            /// GfxConfig_Light (transforms, cull products), not the authored
+            /// lightdef: verified vs 32 BO3 embedded-lightdef anchors,
+            /// +0xDC radius holds (30/32; the 2 misses are genuine BO4
+            /// retunes, consistent with the radius*sqrt(3) cull product at
+            /// +0x1D0), while the old +0xD8 cut_on (constant 0.0001 clamp),
+            /// +0x138 far_edge (cookie-transform constant 0.5) and +0x350
+            /// penumbraRadius (adjacent-struct bytes) were default-value
+            /// artifacts and are gone. Color chroma IS recoverable: +0xB8 is
+            /// the linear-HDR color triple (NaN when radius 0) — normalize
+            /// and inverse-gamma to Radiant's 0-1 _color.
             /// </summary>
             private Dictionary<string, string> ReadLightDefOverrides(byte[] c, HydraInstance instance)
             {
@@ -987,23 +1135,69 @@ namespace HydraX.Library
                 long p = BitConverter.ToInt64(c, 0x00);
                 if (!IsCanonicalPointer(p))
                     return d;
-                var b = instance.Reader.ReadBytes(p + 0xD8, 8);
-                if (b != null && b.Length == 8)
+                var b = instance.Reader.ReadBytes(p + 0xB8, 0x28);
+                if (b == null || b.Length < 0x28)
+                    return d;
+                d["radius"] = N(BitConverter.ToSingle(b, 0xDC - 0xB8));
+                float r = BitConverter.ToSingle(b, 0x00);
+                float g = BitConverter.ToSingle(b, 0x04);
+                float bl = BitConverter.ToSingle(b, 0x08);
+                float max = Math.Max(r, Math.Max(g, bl));
+                if (!float.IsNaN(max) && !float.IsInfinity(max) && max > 0)
                 {
-                    d["cut_on"] = N(BitConverter.ToSingle(b, 0));
-                    d["radius"] = N(BitConverter.ToSingle(b, 4));
+                    // piecewise sRGB inverse — exact on the T7 anchors, so the
+                    // engine's shared transfer, not a plain 2.2 gamma
+                    double Chan(float v)
+                    {
+                        double l = Math.Min(Math.Max(v / max, 0f), 1f);
+                        return l <= 0.0031308 ? 12.92 * l : 1.055 * Math.Pow(l, 1 / 2.4) - 0.055;
+                    }
+                    d["_color"] = string.Format("{0} {1} {2}", N(Chan(r)), N(Chan(g)), N(Chan(bl)));
                 }
-                var fe = instance.Reader.ReadBytes(p + 0x138, 4);
-                if (fe != null && fe.Length == 4)
-                    d["far_edge"] = N(BitConverter.ToSingle(fe, 0));
-                var pr = instance.Reader.ReadBytes(p + 0x350, 4);
-                if (pr != null && pr.Length == 4)
-                    d["penumbraRadius"] = N(BitConverter.ToSingle(pr, 0));
                 return d;
             }
             #endregion
 
             #region Element readers
+            /// <summary>
+            /// A lensFlare elem's FxLensFlareVisualDef record(s) — {uuid, vec3
+            /// sourceDir, f32 sourceSize}, 0x20 bytes. Same two-form convention
+            /// as beams/visuals: visualCount &lt;= 1 stores ONE record INLINE at
+            /// +0x00, &gt;= 2 stores a pointer to an array of visualCount records
+            /// (reading that pointer as an inline GUID produced garbage uuids).
+            /// Null records are padding and dropped; always returns &gt;= 1 record
+            /// (falling back to the inline bytes).
+            /// </summary>
+            private List<byte[]> ReadLensFlareRecords(byte[] c, int visualCount, HydraInstance instance)
+            {
+                var records = new List<byte[]>();
+                if (visualCount >= 2)
+                {
+                    long ptr = BitConverter.ToInt64(c, 0x00);
+                    if (IsCanonicalPointer(ptr))
+                    {
+                        var arr = ReadChunked(instance, ptr, visualCount * 0x20);
+                        for (int v = 0; v < visualCount; v++)
+                        {
+                            var rec = new byte[0x20];
+                            Buffer.BlockCopy(arr, v * 0x20, rec, 0, 0x20);
+                            bool any = false;
+                            for (int k = 0; k < 16; k++)
+                                any |= rec[k] != 0;
+                            if (any)
+                                records.Add(rec);
+                        }
+                    }
+                }
+                if (records.Count == 0)
+                {
+                    var rec = new byte[0x20];
+                    Buffer.BlockCopy(c, 0x00, rec, 0, 0x20);
+                    records.Add(rec);
+                }
+                return records;
+            }
+
             /// <summary>
             /// The beam def NAME(s) of a beamSource/beamTarget elem — same two
             /// forms as T7: visualCount <= 1 ⇒ one char[0x40] name INLINE at
@@ -1041,8 +1235,10 @@ namespace HydraX.Library
             private List<string> ReadVisuals(byte[] c, int visualCount, int elemType, HydraInstance instance, int slot = 0x00)
             {
                 var result = new List<string>();
-                // elemType 7 (model) points at xmodels, everything else at materials
-                string prefix = elemType == 7 ? "xmodel" : "material";
+                // elemType 7 (model) points at xmodels, 14 (runner) at fx defs,
+                // everything else at materials — an unresolved runner ref
+                // spelled material_<hex> can never match its fx_<hex>.efx
+                string prefix = elemType == 7 ? "xmodel" : elemType == 14 ? "fx" : "material";
                 long ptr = BitConverter.ToInt64(c, slot);
                 if (!IsCanonicalPointer(ptr) || elemType == 8)
                 {

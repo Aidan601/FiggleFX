@@ -598,17 +598,26 @@ namespace HydraX.Library
                 string followSound = StrRef(0x210);
 
                 // trail params struct at +0x1E8 — only meaningful for trail
-                // elems; for other types the slot holds unrelated union data
+                // elems; for other types the slot holds unrelated union data.
+                // Same struct as dev-BO4 FxTrailDef bar scrollTime being f32
+                // seconds: the tail is vertCount +0x14, verts ptr +0x18,
+                // indCount +0x20, inds ptr +0x28 (cross-section mesh)
                 double trailScroll = 0, trailRepeat = 0, trailSplit = 0, trailFadeIn = 0, trailFadeOut = 0;
+                byte[] trailDef = null;
                 long trailPtr = BitConverter.ToInt64(c, 0x1E8);
                 if (elemType == 5 && trailPtr != 0)
                 {
-                    var t = instance.Reader.ReadBytes(trailPtr, 0x14);
-                    trailScroll = BitConverter.ToSingle(t, 0x00);
-                    trailRepeat = BitConverter.ToInt32(t, 0x04);
-                    trailSplit = BitConverter.ToInt32(t, 0x08);
-                    trailFadeIn = BitConverter.ToSingle(t, 0x0C);
-                    trailFadeOut = BitConverter.ToSingle(t, 0x10);
+                    var t = instance.Reader.ReadBytes(trailPtr, 0x30) ??
+                            instance.Reader.ReadBytes(trailPtr, 0x14);
+                    if (t != null && t.Length >= 0x14)
+                    {
+                        trailScroll = BitConverter.ToSingle(t, 0x00);
+                        trailRepeat = BitConverter.ToInt32(t, 0x04);
+                        trailSplit = BitConverter.ToInt32(t, 0x08);
+                        trailFadeIn = BitConverter.ToSingle(t, 0x0C);
+                        trailFadeOut = BitConverter.ToSingle(t, 0x10);
+                        trailDef = t;
+                    }
                 }
 
                 // visuals
@@ -807,18 +816,21 @@ namespace HydraX.Library
                 KV("falloffEndAngle", I(0x23C).ToString());
                 KV("lfSourceDir", "1 0 0");
                 KV("lfSourceSize", "15");
+                // optional cross-section mesh, between lfSourceSize and
+                // billboardPivot like the shipping sources
+                WriteTrailDef(sb, trailDef, instance);
                 KV("billboardPivot", Pair(F(0x228) / 2, -F(0x22C) / 2));
                 KV("levelOfDetail", "0");
                 sb.Append('\t').Append(typeName).Append("\n\t{\n");
                 if (elemType == 8)
                 {
                     // dynamicLight2 blocks hold an embedded Radiant lightdef, not a
-                    // quoted asset name. The source lightdef doesn't survive
-                    // compilation, and an empty "" here derails Radiant's parser for
-                    // the whole file — emit a default OMNI lightdef instead. The
-                    // actual light behavior lives in the lightIntensity/Radius/Fov
-                    // graphs above, which are decompiled correctly.
-                    WriteDefaultLightDef(sb, section + n);
+                    // quoted asset name. An empty "" here derails Radiant's parser
+                    // for the whole file — emit the template block with the fields
+                    // recovered from the +0xF0 light struct substituted in
+                    // (see ReadLightDefOverrides); the light's runtime behavior also
+                    // lives in the lightIntensity/Radius/Fov graphs above.
+                    WriteDefaultLightDef(sb, section + n, ReadLightDefOverrides(c, instance));
                 }
                 else
                 {
@@ -829,12 +841,49 @@ namespace HydraX.Library
                 sb.Append("}\n");
             }
 
-            // Default OMNI lightdef used for dynamicLight2 emitters (the real
-            // embedded lightdef is lost at compile time). Key set mirrors shipping
-            // sources, including the duplicated ortho_effect line. The name is a
-            // deterministic Radiant-style "new<number>" derived from the seed so
-            // repeated exports produce identical files.
-            private static void WriteDefaultLightDef(StringBuilder sb, string seed)
+            /// <summary>
+            /// Writes a trail elem's optional cross-section mesh from the +0x1E8
+            /// struct's tail (vertCount +0x14, verts +0x18, indCount +0x20, inds
+            /// +0x28; vertex = {vec2 pos, vec2 normal, f32 texCoord}, 0x14 bytes).
+            /// Source rows are "x y texCoord" — the normals are compiler-derived
+            /// and dropped. Writes nothing unless both arrays read fully and sanely.
+            /// </summary>
+            private static void WriteTrailDef(StringBuilder sb, byte[] td, HydraInstance instance)
+            {
+                if (td == null || td.Length < 0x30)
+                    return;
+                int vertCount = BitConverter.ToInt32(td, 0x14);
+                long vertsPtr = BitConverter.ToInt64(td, 0x18);
+                int indCount = BitConverter.ToInt32(td, 0x20);
+                long indsPtr = BitConverter.ToInt64(td, 0x28);
+                if (vertCount <= 0 || vertCount > 4096 || indCount <= 0 || indCount > 65536 ||
+                    vertsPtr == 0 || indsPtr == 0)
+                    return;
+                var verts = instance.Reader.ReadBytes(vertsPtr, vertCount * 0x14);
+                var inds = instance.Reader.ReadBytes(indsPtr, indCount * 2);
+                if (verts == null || inds == null || verts.Length < vertCount * 0x14 || inds.Length < indCount * 2)
+                    return;
+                sb.Append("\ttrailDef\n\t{\n");
+                for (int v = 0; v < vertCount; v++)
+                {
+                    int o = v * 0x14;
+                    sb.Append("\t\t").Append(N(BitConverter.ToSingle(verts, o)))
+                      .Append(' ').Append(N(BitConverter.ToSingle(verts, o + 4)))
+                      .Append(' ').Append(N(BitConverter.ToSingle(verts, o + 16))).Append('\n');
+                }
+                sb.Append("\t} {\n");
+                for (int v = 0; v < indCount; v++)
+                    sb.Append("\t\t").Append(BitConverter.ToUInt16(inds, v * 2)).Append('\n');
+                sb.Append("\t};\n");
+            }
+
+            // Lightdef template for dynamicLight2 emitters; `overrides` replaces
+            // values by key (the fields ReadLightDefOverrides recovers from the
+            // compiled light struct — the rest stay at these defaults). Key set
+            // mirrors shipping sources, including the duplicated ortho_effect
+            // line. The name is a deterministic Radiant-style "new<number>"
+            // derived from the seed so repeated exports produce identical files.
+            private static void WriteDefaultLightDef(StringBuilder sb, string seed, Dictionary<string, string> overrides = null)
             {
                 uint hash = 2166136261;
                 foreach (char ch in seed)
@@ -883,8 +932,83 @@ namespace HydraX.Library
                     "volumetricSampleCount 8",
                 };
                 foreach (var line in lines)
-                    sb.Append("\t\t\t").Append(line).Append('\n');
+                {
+                    string outLine = line;
+                    if (overrides != null)
+                    {
+                        int sp = line.IndexOf(' ');
+                        string key = sp > 0 ? line.Substring(0, sp) : line;
+                        if (overrides.TryGetValue(key, out var v))
+                            outLine = key + " " + v;
+                    }
+                    sb.Append("\t\t\t").Append(outLine).Append('\n');
+                }
                 sb.Append("\t\t};\n");
+            }
+
+            /// <summary>
+            /// Recovers the authored Radiant lightdef fields from a T7 dynamicLight2
+            /// elem's +0xF0 light-struct pointer. Probed live on zm_factory against
+            /// the shipping embedded lightdefs (36 blocks; diversity-confirmed:
+            /// type i32 +0x48 (4=OMNI, 2=SPOT), falloffdistance +0x5C (10 distinct
+            /// values), cut_on +0x70 / radius +0x74 (the dev cut_on/radius adjacency),
+            /// far_edge +0x7C, cos(fov_outer/2) at +0x114, ortho_effect +0x130; the
+            /// color triple at +0x60 is stored piecewise-sRGB-linear x 2^stops —
+            /// white anchors read exactly 2^stops, which recovers stops, and the
+            /// colored anchor inverts to its source values exactly). near_edge +0x78,
+            /// penumbraRadius +0x9C, roundness +0x11C and superellipse +0x120 fit
+            /// everywhere but were default-constant on the probe map — kept as
+            /// dev-order verbatim reads; bulbLength +0x14C (single-anchor hit, zero
+            /// elsewhere). NOT stored in the struct at all (full 0x800 scanned):
+            /// shadowmapScale, culling_cutoff/falloff — their template defaults
+            /// remain; SPOT angles would need inverting the direction vectors.
+            /// </summary>
+            private static Dictionary<string, string> ReadLightDefOverrides(byte[] c, HydraInstance instance)
+            {
+                var d = new Dictionary<string, string>();
+                long p = BitConverter.ToInt64(c, 0xF0);
+                if (p <= 0x10000 || p > 0x7FFFFFFFFFFF)
+                    return d;
+                var b = instance.Reader.ReadBytes(p, 0x160);
+                if (b == null || b.Length < 0x160)
+                    return d;
+                int type = BitConverter.ToInt32(b, 0x48);
+                if (type == 2)
+                    d["PRIMARY_TYPE"] = "SPOT";
+                else if (type != 4)
+                    return d;   // unexpected layout — keep the full default block
+                d["falloffdistance"] = N(BitConverter.ToSingle(b, 0x5C));
+                float r = BitConverter.ToSingle(b, 0x60);
+                float g = BitConverter.ToSingle(b, 0x64);
+                float bl = BitConverter.ToSingle(b, 0x68);
+                float max = Math.Max(r, Math.Max(g, bl));
+                if (!float.IsNaN(max) && !float.IsInfinity(max) && max > 0)
+                {
+                    double Chan(float v)
+                    {
+                        double l = Math.Min(Math.Max(v / max, 0f), 1f);
+                        return l <= 0.0031308 ? 12.92 * l : 1.055 * Math.Pow(l, 1 / 2.4) - 0.055;
+                    }
+                    d["_color"] = string.Format("{0} {1} {2}", N(Chan(r)), N(Chan(g)), N(Chan(bl)));
+                    int stops = (int)Math.Round(Math.Log(max, 2));
+                    if (stops >= 1 && stops <= 31)
+                        d["stops"] = stops.ToString();
+                }
+                d["cut_on"] = N(BitConverter.ToSingle(b, 0x70));
+                d["radius"] = N(BitConverter.ToSingle(b, 0x74));
+                d["near_edge"] = N(BitConverter.ToSingle(b, 0x78));
+                d["far_edge"] = N(BitConverter.ToSingle(b, 0x7C));
+                d["penumbraRadius"] = N(BitConverter.ToSingle(b, 0x9C));
+                float cosHalf = BitConverter.ToSingle(b, 0x114);
+                if (cosHalf >= -1f && cosHalf <= 1f)
+                    d["fov_outer"] = N(2 * Math.Acos(cosHalf) * 180.0 / Math.PI);
+                d["roundness"] = N(BitConverter.ToSingle(b, 0x11C));
+                d["bulbLength"] = N(BitConverter.ToSingle(b, 0x14C));
+                d["superellipse"] = string.Format("{0} {1} {2} {3}",
+                    N(BitConverter.ToSingle(b, 0x120)), N(BitConverter.ToSingle(b, 0x124)),
+                    N(BitConverter.ToSingle(b, 0x128)), N(BitConverter.ToSingle(b, 0x12C)));
+                d["ortho_effect"] = N(BitConverter.ToSingle(b, 0x130));
+                return d;
             }
 
             private static double[] SampleTimes(int n)

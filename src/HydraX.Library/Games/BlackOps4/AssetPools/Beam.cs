@@ -172,7 +172,16 @@ namespace HydraX.Library
 
                 // ---- core scalars (HIGH: anchor + distribution match) ----
                 values["numSegments"] = I(0x20).ToString();
-                values["useVirtualTarget"] = (I(0x24) & 1).ToString();
+                // +0x24 is curveType, NOT useVirtualTarget: dev BeamDef order is
+                // numSegments/curveType/msecAnimLoopTime and the corpus holds
+                // value 2 (ROUNDED), impossible for a bool. useVirtualTarget's
+                // T8 slot is unlocated — left at the GDF default.
+                switch (I(0x24))
+                {
+                    case 1: values["curveType"] = "smooth"; break;
+                    case 2: values["curveType"] = "rounded"; break;
+                    default: values["curveType"] = "bspline"; break;
+                }
                 values["msecAnimLoopTime"] = I(0x28).ToString();
                 values["maxLength"] = N(F(0x2C));
                 values["virtualTargetDistance"] = N(F(0x30));
@@ -182,6 +191,22 @@ namespace HydraX.Library
                 values["beamEffectDistance"] = N(F(0xAC));
                 values["beamEffectSpeed"] = N(F(0xB0));
                 values["retractSpeed"] = N(F(0xBC));
+                // shape/UV block after beamEffectSpeed, dev BeamDef order
+                // (MEDIUM: 169-def value distributions match the GDF combo
+                // vocabularies — flamethrowers are uv=1, electric arcs
+                // shape=1 star, eyebeams rot=25; see docs/beams.md)
+                switch (I(0xE8))
+                {
+                    case 1: values["uvMode"] = "repeating horizontal"; break;
+                    case 2: values["uvMode"] = "vertical"; break;
+                    case 3: values["uvMode"] = "repeating vertical"; break;
+                    default: values["uvMode"] = "horizontal"; break;
+                }
+                var shapes = new[] { "cross", "star", "ribbon", "triangle", "square",
+                                     "pentagon", "hexagon", "heptagon", "octagon" };
+                int shape = I(0xEC);
+                values["beamShape"] = shape >= 0 && shape < shapes.Length ? shapes[shape] : "cross";
+                values["beamShapeRotation"] = N(F(0x100));
                 values["slackStartTimeMsec"] = I(0x3DC).ToString();
                 values["slackEaseInTimeMsec"] = I(0x3E0).ToString();
                 values["slackDurationMsec"] = I(0x3E4).ToString();
