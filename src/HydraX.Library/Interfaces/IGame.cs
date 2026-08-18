@@ -20,9 +20,19 @@ namespace HydraX.Library
         long AssetPoolsAddress { get; }
 
         /// <summary>
+        /// Gets the Memory Addresses of the String Pool
+        /// </summary>
+        long StringPoolAddress { get; }
+
+        /// <summary>
         /// Gets or Sets the Base Address
         /// </summary>
         long BaseAddress { get; set; }
+
+        /// <summary>
+        /// Gets a string from the string table in the game's memory
+        /// </summary>
+        string GetString(long index, HydraInstance instance);
 
         /// <summary>
         /// Gets or Sets the Process Index (Matches the Address + Process Name Array)

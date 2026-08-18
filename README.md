@@ -4,20 +4,21 @@ FiggleFX is a tool forked from [HydraX](https://github.com/Scobalula/HydraX) by
 [Scobalula](https://github.com/Scobalula) that decompiles and exports effects
 from Call of Duty: Black Ops 3 and 4.
 
-It rips **effects**, **lens flares** and **beams** out of the running game and
-writes them back out as editable source files for the BO3 mod tools.
+It rips **effects**, **lens flares**, **beams** and **screen filters** out of
+the running game and writes them back out as editable source files for the BO3
+mod tools.
 
-| Game             | Pool                | Output                                                                                     |
-| ---------------- | ------------------- | ------------------------------------------------------------------------------------------ |
-| Black Ops 3 (T7) | `fx`, `klf`, `beam` | `.efx` (`iwfx 3`), `.klf`, beam defs as `beam.gdf` `.gdt`                                  |
-| Black Ops 4 (T8) | `fx`, `klf`, `beam` | `.efx` ported to BO3, `.klf`, beam defs as `beam.gdf` `.gdt` |
+| Game             | Pool                                 | Output                                                                                     |
+| ---------------- | ------------------------------------ | ------------------------------------------------------------------------------------------ |
+| Black Ops 3 (T7) | `fx`, `klf`, `beam`, `postfxbundle`  | `.efx` (`iwfx 3`), `.klf`, beam and postfx bundle defs as `.gdt`                           |
+| Black Ops 4 (T8) | `fx`, `klf`, `beam`, `postfxbundle`  | `.efx` ported to BO3, `.klf`, beam and postfx bundle defs as `.gdt` |
 
 Export options,
 
 | Option         | Effect                                                                              |
 | -------------- | ----------------------------------------------------------------------------------- |
 | **Keep paths** | write each effect into its folder path under `fx\`, the path it installs to         |
-| **Asset list** | also write `<name>_assets.txt`, the materials/models/effects each effect references |
+| **Asset list** | also write `<name>_assets.txt`, the materials, models, effects and sound aliases each effect references |
 | **Hashes**     | how a BO4 name that isn't in the dictionaries is spelled, Saluki or Greyhound       |
 
 Black Ops 4 names assets by hash, so anything the shipped dictionaries don't
@@ -44,8 +45,8 @@ keep their normal names.
 
 ## Installing what you rip
 
-Exports land in `exported_files\<game>\` (`fx\`, `lensflares\` and `beams\`
-subfolders), but have to go back in at the right path:
+Exports land in `exported_files\<game>\` (`fx\`, `lensflares\`, `beams\` and
+`postfxbundles\` subfolders), but have to go back in at the right path:
 
 | File   | Goes in                                          |
 | ------ | ------------------------------------------------ |
@@ -84,6 +85,11 @@ or Saluki) and set it up in APE. `<name>_assets.txt` is the checklist.
   no BO3 equivalent and are flattened to their base values, and the collision
   settings aren't located in the compiled data yet, so they stay at GDF
   defaults. Beam materials are often hash-named until the dictionaries grow.
+- **Screen filters**: a postfx bundle GDT carries every stage, its filter
+  material and its animated shader constants. BO3 bundles are exact. BO4 bakes
+  its constants down to keyframe tracks, and 86% of those rebuild exactly as
+  BO3 curves; the rest are values the BO3 format cannot express and are noted
+  in the `<name>_tracks.txt` written beside the GDT.
 - **Lens flares**: positions/colour-depth fade distances, max angle and rotation
   seeds live in runtime buffer objects, not in the flare def, and are written at
   their defaults (~85% of keys are exact). The checksum is written as 0, which

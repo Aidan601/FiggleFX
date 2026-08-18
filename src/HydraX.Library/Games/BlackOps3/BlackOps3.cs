@@ -48,6 +48,11 @@ namespace HydraX.Library
         public long AssetPoolsAddress { get; set; }
 
         /// <summary>
+        /// Gets Black Ops 3 String Pool
+        /// </summary>
+        public long StringPoolAddress { get; set; }
+
+        /// <summary>
         /// Gets or Sets Black Ops 3's Base Address (ASLR)
         /// </summary>
         public long BaseAddress { get; set; }
@@ -182,6 +187,11 @@ namespace HydraX.Library
             depend,
         }
 
+        public string GetString(long index, HydraInstance instance)
+        {
+            return instance.Reader.ReadNullTerminatedString(instance.Game.StringPoolAddress + (0x1C * index) + 4);
+        }
+
         public object Clone()
         {
             return MemberwiseClone();
@@ -214,16 +224,23 @@ namespace HydraX.Library
                 module.BaseAddress.ToInt64() + module.Size,
                 true);
 
+                long[] strPool = instance.Reader.FindBytes(
+                    new byte?[] { 0x4C, 0x03, 0xF6, 0x33, 0xDB, 0x49, null, null, 0x8B, 0xD3, 0x8D, 0x7B },
+                    module.BaseAddress.ToInt64(),
+                    module.BaseAddress.ToInt64() + module.Size,
+                    true);
+
                 poolEntrys = instance.Reader.FindBytes(
                     new byte?[] { 0x48, 0x8D, 0x05, null, null, null, null, 0x41, 0x8B, 0x34, 0x24, 0x85, 0xF6, 0x0F, 0x84, 0xF0, 0x00, 0x00, 0x00, 0x4C, 0x8D },
                     module.BaseAddress.ToInt64(),
                     module.BaseAddress.ToInt64() + module.Size,
                     true);
 
-                if (pools.Length == 0 || poolEntrys.Length == 0)
+                if (pools.Length == 0 || strPool.Length == 0 || poolEntrys.Length == 0)
                     return false;
 
                 AssetPoolsAddress = instance.Reader.ReadInt32(pools[0] + 5) + pools[0] + 9;
+                StringPoolAddress = instance.Reader.ReadInt32(strPool[0] + 29) + strPool[0] + 33;
                 BaseAddress = module.BaseAddress.ToInt64();
 
                 zoneEntriesAddress = instance.Reader.ReadInt32(poolEntrys[0] + 22) + poolEntrys[0] + 26;
@@ -239,6 +256,9 @@ namespace HydraX.Library
                 // 48 8B CD 48 8B 6C 24 ? 48 C1 E1 05 42 80 BC 21 ? ? ? ? ? 75 1B 4A 8B 84 21 ? ? ? ? 48 89 03 42 FF 8C 21 ? ? ? ? 4A 89 9C 21 ? ? ? ?
                 AssetPoolsAddress = 0xF3B0C70L + module.BaseAddress.ToInt64();
                 BaseAddress = module.BaseAddress.ToInt64();
+
+                // 33 FF 8B D7 48 8B 08 48 8D 44 24 ? 8D 5F 01 49 89 04 0E 48 8D 05 ? ? ? ? 48 89 05 ? ? ? ? 48 89 05 ? ? ? ? 48 8D 05 ? ? ? ? 48 89 05 ? ? ? ?
+                StringPoolAddress = 0x3B1F780L + module.BaseAddress.ToInt64();
 
                 // 48 8D 05 ? ? ? ? 66 66 0F 1F 84 00 ? ? ? ? 41 8B 34 24 85 F6 0F 84 ? ? ? ? 4C 8D 2D ? ? ? ? 4C 8D 25 ? ? ? ? 66 0F 1F 44 00 ?
                 zoneEntriesAddress = 0xF882300L + module.BaseAddress.ToInt64();

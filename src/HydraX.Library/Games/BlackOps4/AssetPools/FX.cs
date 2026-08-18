@@ -642,12 +642,12 @@ namespace HydraX.Library
                 }
                 string SoundName(int off)
                 {
-                    // an ALIAS reference, not a sound file: `soundalias_` is a
-                    // separate namespace from the `sound_` of a file path, and
-                    // neither extractor rips aliases, so the prefix is fixed
-                    // while the hash keeps the Saluki full-63-bit format
+                    // an ALIAS reference, not a sound file, and nothing extracts
+                    // aliases — so an unresolved one is spelled as the BARE
+                    // 63-bit hash (user, 2026-08-18), with no type prefix for a
+                    // consumer to strip
                     ulong raw = BitConverter.ToUInt64(c, off);
-                    return raw == 0 ? "" : GetHashName(raw, "soundalias");
+                    return raw == 0 ? "" : GetHashNameBare(raw);
                 }
                 string fxOnImpact = RefName(0xC8);
                 string fxOnDeath = RefName(0xD8);
@@ -747,6 +747,11 @@ namespace HydraX.Library
                 foreach (var r in new[] { fxOnImpact, fxOnDeath, emission, attachment })
                     if (r != "")
                         assets.Add("fx " + r);
+                // the emitter's own aliases: nothing here rips a sound, but the
+                // effect is silent in BO3 without them, so the checklist says so
+                foreach (var snd in new[] { spawnSound, followSound })
+                    if (snd != "")
+                        assets.Add("sound " + snd);
 
                 // ---- write the emitter block (canonical v3 key order) ----
                 sb.Append("{\n");

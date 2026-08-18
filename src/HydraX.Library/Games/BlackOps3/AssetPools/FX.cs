@@ -704,6 +704,11 @@ namespace HydraX.Library
                 foreach (var r in new[] { fxOnImpact, fxOnDeath, emission, attachment })
                     if (r != "")
                         assets.Add("fx " + r);
+                // the emitter's own sound aliases, so the checklist covers what
+                // the effect needs to be audible, not just what it draws
+                foreach (var snd in new[] { spawnSound, followSound })
+                    if (snd != "")
+                        assets.Add("sound " + snd);
 
                 // ---- write the emitter block (canonical v3 key order) ----
                 sb.Append("{\n");

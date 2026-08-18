@@ -214,6 +214,8 @@ namespace HydraX.Library
 
         public long AssetPoolsAddress { get; set; }
 
+        public long StringPoolAddress { get; set; }
+
         public long BaseAddress { get; set; }
 
         public int ProcessIndex { get; set; }
@@ -498,6 +500,23 @@ namespace HydraX.Library
         }
 
         /// <summary>
+        /// As <see cref="GetHashName"/>, but an unresolved hash is spelled with
+        /// NO type prefix at all — the bare 16-digit value. Sound aliases are
+        /// written this way: no extractor rips aliases, so a `soundalias_`
+        /// prefix agreed with nothing and only got in the way of the tools that
+        /// key aliases on the hash.
+        /// </summary>
+        public static string GetHashNameBare(ulong hash)
+        {
+            hash &= NameBits;
+
+            if (HashIndex.TryGetValue(hash & HashMask, out var name))
+                return name;
+
+            return string.Format("{0:x16}", hash);
+        }
+
+        /// <summary>
         /// FNV1a-64 of the given string, masked to 60 bits (T8 asset name hashing)
         /// </summary>
         public static ulong HashName(string value)
@@ -509,6 +528,11 @@ namespace HydraX.Library
                 hash *= 0x100000001B3;
             }
             return hash & HashMask;
+        }
+
+        public string GetString(long index, HydraInstance instance)
+        {
+            return index.ToString();
         }
 
         public object Clone()
